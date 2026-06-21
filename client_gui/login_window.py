@@ -8,14 +8,19 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
     QHBoxLayout,
-    QCheckBox
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QMessageBox
 )
 
 from client_network import (
     ClientNetwork,
     load_auth_token,
     save_auth_token,
-    clear_auth_token
+    clear_auth_token,
+    load_server_config_dict,
+    save_server_config
 )
 from client_gui.main_window import MainWindow, load_settings, save_settings
 
@@ -59,6 +64,61 @@ class AuthWorker(QThread):
         self.finished_signal.emit(response)
 
 
+class ServerConfigDialog(QDialog):
+    """
+    Окно настройки адреса сервера перед входом.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("Сервер")
+        self.resize(320, 160)
+
+        config = load_server_config_dict()
+
+        self.host_input = QLineEdit()
+        self.host_input.setPlaceholderText("Хост сервера")
+        self.host_input.setText(str(config.get("host", "127.0.0.1")))
+
+        self.port_input = QLineEdit()
+        self.port_input.setPlaceholderText("Порт сервера")
+        self.port_input.setText(str(config.get("port", 5000)))
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save |
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel("Хост сервера:"))
+        layout.addWidget(self.host_input)
+        layout.addWidget(QLabel("Порт сервера:"))
+        layout.addWidget(self.port_input)
+        layout.addWidget(buttons)
+
+        self.setLayout(layout)
+
+    def get_data(self) -> tuple[str, int] | None:
+        host = self.host_input.text().strip()
+
+        try:
+            port = int(self.port_input.text().strip())
+        except ValueError:
+            return None
+
+        if not host:
+            return None
+
+        if not 1 <= port <= 65535:
+            return None
+
+        return host, port
+
+
+
 class LoginWindow(QWidget):
     """
     Простое окно авторизации и регистрации CatCorp.
@@ -74,7 +134,7 @@ class LoginWindow(QWidget):
         self.auto_login_started = False
 
         self.setWindowTitle("CatCorp — Вход")
-        self.setFixedSize(360, 300)
+        self.setFixedSize(380, 340)
 
         self._build_ui()
         self.apply_mode()
@@ -111,6 +171,9 @@ class LoginWindow(QWidget):
         self.switch_button = QPushButton()
         self.switch_button.clicked.connect(self.switch_mode)
 
+        self.server_button = QPushButton("Сервер")
+        self.server_button.clicked.connect(self.open_server_dialog)
+
         self.status_label = QLabel("")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setWordWrap(True)
@@ -125,6 +188,7 @@ class LoginWindow(QWidget):
         form_layout.addWidget(self.remember_login_checkbox)
         form_layout.addWidget(self.action_button)
         form_layout.addWidget(self.switch_button)
+        form_layout.addWidget(self.server_button)
         form_layout.addWidget(self.status_label)
 
         main_layout = QHBoxLayout()
@@ -292,6 +356,32 @@ class LoginWindow(QWidget):
 
         self.show_status(message or "Ошибка", is_error=True)
 
+    def open_server_dialog(self):
+        """
+        Открывает меню настройки host/port сервера.
+        """
+        dialog = ServerConfigDialog(self)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        data = dialog.get_data()
+
+        if data is None:
+            QMessageBox.warning(self, "Ошибка", "Введите корректный хост и порт от 1 до 65535")
+            return
+
+        host, port = data
+
+        if not save_server_config(host, port):
+            QMessageBox.warning(self, "Ошибка", "Не удалось сохранить настройки сервера")
+            return
+
+        if self.network.connected:
+            self.network.disconnect()
+
+        self.show_status(f"Сервер сохранён: {host}:{port}", is_error=False)
+
     def show_status(self, text: str, is_error: bool):
         """
         Показывает сообщение о результате операции.
@@ -312,6 +402,7 @@ class LoginWindow(QWidget):
         self.repeat_password_input.setEnabled(enabled)
         self.action_button.setEnabled(enabled)
         self.switch_button.setEnabled(enabled)
+        self.server_button.setEnabled(enabled)
 
     def open_main_window(self):
         """

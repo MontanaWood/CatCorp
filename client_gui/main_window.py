@@ -1133,7 +1133,7 @@ class MainWindow(QWidget):
 
         self.selected_user = None
         self.selected_chat_type = None
-        self.chat_title_label.setText("Выберите чат или начните новый")
+        self.chat_title_label.setText("")
         self.typing_label.setText("")
         self.messages_list.clear()
         self.current_messages = []
@@ -1305,7 +1305,7 @@ class MainWindow(QWidget):
 
         if self.selected_user and self.selected_user.get("id") == user_id:
             self.selected_user = None
-            self.chat_title_label.setText("Выберите чат или начните новый")
+            self.chat_title_label.setText("")
             self.typing_label.setText("")
             self.messages_list.clear()
             self.current_messages = []

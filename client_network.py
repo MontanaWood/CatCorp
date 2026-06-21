@@ -3,12 +3,17 @@
 
 import socket
 import threading
-from configparser import ConfigParser
 import os
 import sys
 import json
 
 from common.protocol import send_json, recv_json
+
+
+DEFAULT_SERVER_CONFIG = {
+    "host": "127.0.0.1",
+    "port": 5000
+}
 
 
 def resource_path(relative_path: str) -> str:
@@ -26,36 +31,25 @@ def resource_path(relative_path: str) -> str:
     return os.path.join(base_path, relative_path)
 
 
-def external_config_path() -> str:
+def app_dir_path() -> str:
     """
-    Возвращает путь к config.ini рядом с client.py или client.exe.
-
-    Это важно, потому что config.ini должен лежать рядом с .exe,
-    а не внутри собранного файла.
+    Возвращает папку client.py или client.exe.
     """
     if getattr(sys, "frozen", False):
-        # Если запущен .exe, путь берём рядом с .exe
-        app_dir = os.path.dirname(sys.executable)
-    else:
-        # Если запущен обычный .py, путь берём рядом с этим файлом
-        app_dir = os.path.dirname(__file__)
+        return os.path.dirname(sys.executable)
 
-    return os.path.join(app_dir, "config.ini")
+    return os.path.dirname(__file__)
+
 
 
 
 def app_data_path(filename: str) -> str:
     """
     Возвращает путь к локальному файлу рядом с client.py или client.exe.
-    Используется для auth_token.json и других клиентских файлов.
+    Используется для auth_token.json, server_config.json и других клиентских файлов.
     Токен не вшивается в exe: это небезопасно, потому что exe можно скопировать.
     """
-    if getattr(sys, "frozen", False):
-        app_dir = os.path.dirname(sys.executable)
-    else:
-        app_dir = os.path.dirname(__file__)
-
-    return os.path.join(app_dir, filename)
+    return os.path.join(app_dir_path(), filename)
 
 
 def auth_token_path() -> str:
@@ -113,29 +107,84 @@ def clear_auth_token():
         pass
 
 
+def server_config_path() -> str:
+    """
+    Возвращает путь к локальному server_config.json рядом с client.py или client.exe.
+    Если файла нет, используются встроенные значения DEFAULT_SERVER_CONFIG.
+    """
+    return app_data_path("server_config.json")
+
+
+def load_server_config_dict() -> dict:
+    """
+    Загружает настройки сервера.
+
+    config.ini больше не обязателен:
+    дефолтный host/port встроен в программу, а изменения пользователя
+    сохраняются в server_config.json рядом с exe.
+    """
+    config = DEFAULT_SERVER_CONFIG.copy()
+    path = server_config_path()
+
+    if not os.path.exists(path):
+        return config
+
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            loaded = json.load(file)
+
+        if isinstance(loaded, dict):
+            host = str(loaded.get("host", config["host"])).strip()
+            port = int(loaded.get("port", config["port"]))
+
+            if host:
+                config["host"] = host
+
+            if 1 <= port <= 65535:
+                config["port"] = port
+
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    return config
+
+
+def save_server_config(host: str, port: int) -> bool:
+    """
+    Сохраняет настройки сервера рядом с exe.
+    """
+    host = str(host or "").strip()
+
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return False
+
+    if not host:
+        return False
+
+    if not 1 <= port <= 65535:
+        return False
+
+    try:
+        with open(server_config_path(), "w", encoding="utf-8") as file:
+            json.dump({"host": host, "port": port}, file, ensure_ascii=False, indent=4)
+
+        return True
+
+    except OSError:
+        return False
+
+
 def load_server_config() -> tuple[str, int]:
     """
-    Загружает IP и порт сервера из config.ini.
+    Возвращает host и port сервера.
 
-    Пример config.ini:
-    [server]
-    host = 127.0.0.1
-    port = 5000
+    Если server_config.json отсутствует, используются встроенные значения:
+    127.0.0.1:5000
     """
-    config_path = external_config_path()
-
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(
-            f"Файл config.ini не найден: {config_path}"
-        )
-
-    config = ConfigParser()
-    config.read(config_path, encoding="utf-8")
-
-    host = config.get("server", "host", fallback="127.0.0.1")
-    port = config.getint("server", "port", fallback=5000)
-
-    return host, port
+    config = load_server_config_dict()
+    return config["host"], int(config["port"])
 
 
 class ClientNetwork:
@@ -206,9 +255,6 @@ class ClientNetwork:
 
             return True
 
-        except FileNotFoundError as error:
-            self._emit_error(str(error))
-            return False
 
         except ConnectionRefusedError:
             self._emit_error("Сервер недоступен. Проверьте, что server.py запущен.")
