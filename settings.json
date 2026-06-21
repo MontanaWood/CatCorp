@@ -1,0 +1,7 @@
+{
+    "sound_enabled": true,
+    "tray_notifications_enabled": false,
+    "minimize_to_tray": false,
+    "hide_notification_preview": false,
+    "remember_login": false
+}
