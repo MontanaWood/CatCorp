@@ -1,9 +1,9 @@
-.venv/
+.env
+auth_token.json
+settings.json
+server_config.json
 __pycache__/
 *.pyc
-
-build/
 dist/
+build/
 *.spec
-
-.env

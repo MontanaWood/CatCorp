@@ -1,27 +1,129 @@
 # Модуль работы серверной части CatCorp с базой данных MySQL/MariaDB
 
 import hashlib
+import bcrypt
 import secrets
+import os
 import mysql.connector
 from mysql.connector import Error
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
+
+def get_env_int(name: str, default: int) -> int:
+    """
+    Безопасно читает целое число из переменной окружения.
+    """
+    value = os.getenv(name)
+
+    if value is None:
+        return default
+
+    try:
+        return int(value)
+    except ValueError:
+        return default
 
 
 DB_CONFIG = {
-    "host": "127.0.0.1",
-    "port": 3307,
-    "user": "root",
-    "password": "",
-    "database": "catcorp",
+    "host": os.getenv("CATCORP_DB_HOST", "127.0.0.1"),
+    "port": get_env_int("CATCORP_DB_PORT", 3307),
+    "user": os.getenv("CATCORP_DB_USER", "catcorp_app"),
+    "password": os.getenv("CATCORP_DB_PASSWORD", ""),
+    "database": os.getenv("CATCORP_DB_NAME", "catcorp"),
     "charset": "utf8mb4"
 }
 
 
-def hash_password(password: str) -> str:
+def hash_token(token: str) -> str:
     """
-    Возвращает SHA-256 хэш пароля.
-    Пароль не хранится в базе в открытом виде.
+    Хэширует auth-токен через SHA-256.
+
+    Для токенов это допустимо, потому что token_urlsafe(32) создаёт
+    длинный случайный секрет. Длина SHA-256 также подходит под поле
+    user_tokens.token_hash VARCHAR(64).
+    """
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def legacy_sha256_password_hash(password: str) -> str:
+    """
+    Старый формат пароля. Оставлен только для совместимости
+    с уже существующими пользователями.
     """
     return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def is_legacy_sha256_hash(value: str) -> bool:
+    """
+    Проверяет, похож ли хэш на старый SHA-256 hex.
+    """
+    if not isinstance(value, str):
+        return False
+    if len(value) != 64:
+        return False
+    return all(char in "0123456789abcdefABCDEF" for char in value)
+
+
+def hash_password(password: str) -> str:
+    """
+    Возвращает bcrypt-хэш пароля.
+    """
+    hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
+    return hashed.decode("utf-8")
+
+
+def verify_password(password: str, stored_hash: str) -> bool:
+    """
+    Проверяет пароль.
+
+    Поддерживает:
+    - новый формат bcrypt;
+    - старый формат SHA-256 без соли для мягкой миграции.
+    """
+    if not stored_hash:
+        return False
+    if is_legacy_sha256_hash(stored_hash):
+        return legacy_sha256_password_hash(password) == stored_hash
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), stored_hash.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
+
+
+def upgrade_password_hash_if_needed(user_id: int, password: str, stored_hash: str) -> bool:
+    """
+    Если пользователь вошёл со старым SHA-256-хэшем, обновляет его пароль
+    до bcrypt без сброса пароля.
+    """
+    if not is_legacy_sha256_hash(stored_hash):
+        return True
+    connection = get_connection()
+    if connection is None:
+        return False
+    try:
+        cursor = connection.cursor()
+        new_hash = hash_password(password)
+        cursor.execute(
+            """
+            UPDATE users
+            SET password_hash = %s
+            WHERE id = %s
+            """,
+            (new_hash, user_id)
+        )
+        connection.commit()
+        return True
+    except Error as error:
+        print("Ошибка при обновлении хэша пароля:")
+        print(error)
+        return False
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
 
 
 def get_connection():
@@ -36,6 +138,7 @@ def get_connection():
     except Error as error:
         print("Ошибка подключения к базе данных:")
         print(error)
+        print("Проверьте .env: CATCORP_DB_HOST, CATCORP_DB_PORT, CATCORP_DB_USER, CATCORP_DB_PASSWORD, CATCORP_DB_NAME")
         return None
 
 def ensure_user_profile_columns() -> bool:
@@ -133,7 +236,7 @@ def create_auth_token(user_id: int) -> str | None:
     try:
         cursor = connection.cursor()
         token = secrets.token_urlsafe(32)
-        token_hash = hash_password(token)
+        token_hash = hash_token(token)
 
         query = """
             INSERT INTO user_tokens (user_id, token_hash)
@@ -174,7 +277,7 @@ def authenticate_by_token(token: str):
 
     try:
         cursor = connection.cursor(dictionary=True)
-        token_hash = hash_password(token)
+        token_hash = hash_token(token)
 
         query = """
             SELECT u.id, u.username, u.role, u.display_name, u.user_status, u.last_login_at
@@ -218,7 +321,7 @@ def delete_auth_token(token: str) -> bool:
 
     try:
         cursor = connection.cursor()
-        token_hash = hash_password(token)
+        token_hash = hash_token(token)
 
         query = """
             DELETE FROM user_tokens
@@ -244,34 +347,37 @@ def delete_auth_token(token: str) -> bool:
 def authenticate_user(username: str, password: str):
     """
     Проверяет логин и пароль пользователя.
+
+    Новый формат паролей — bcrypt.
+    Старые SHA-256-хэши поддерживаются временно: при успешном входе
+    такой пароль автоматически обновляется до bcrypt.
     """
     ensure_user_profile_columns()
     connection = get_connection()
-
     if connection is None:
         return None
-
     try:
         cursor = connection.cursor(dictionary=True)
-        password_hash = hash_password(password)
-
         query = """
-            SELECT id, username, role, display_name, user_status, department, position, last_login_at
+            SELECT id, username, role, display_name, user_status, department, position, last_login_at, password_hash
             FROM users
-            WHERE username = %s AND password_hash = %s
+            WHERE username = %s
             LIMIT 1
         """
-
-        cursor.execute(query, (username, password_hash))
+        cursor.execute(query, (username,))
         user = cursor.fetchone()
-
+        if user is None:
+            return None
+        stored_hash = user.get("password_hash")
+        if not verify_password(password, stored_hash):
+            return None
+        upgrade_password_hash_if_needed(user["id"], password, stored_hash)
+        user.pop("password_hash", None)
         return user
-
     except Error as error:
         print("Ошибка при авторизации пользователя:")
         print(error)
         return None
-
     finally:
         if connection.is_connected():
             cursor.close()
@@ -536,37 +642,28 @@ def change_user_password(user_id: int, old_password: str, new_password: str) -> 
     """
     if not old_password:
         return False, "Введите старый пароль"
-
     if len(new_password) < 4:
         return False, "Новый пароль должен быть не короче 4 символов"
-
     connection = get_connection()
-
     if connection is None:
         return False, "Нет подключения к базе данных"
-
     try:
         cursor = connection.cursor(dictionary=True)
-
-        old_hash = hash_password(old_password)
-
         cursor.execute(
             """
-            SELECT id
+            SELECT id, password_hash
             FROM users
-            WHERE id = %s AND password_hash = %s
+            WHERE id = %s
             LIMIT 1
             """,
-            (user_id, old_hash)
+            (user_id,)
         )
-
         user = cursor.fetchone()
-
         if user is None:
+            return False, "Пользователь не найден"
+        if not verify_password(old_password, user.get("password_hash")):
             return False, "Старый пароль указан неверно"
-
         new_hash = hash_password(new_password)
-
         cursor.execute(
             """
             UPDATE users
@@ -575,16 +672,12 @@ def change_user_password(user_id: int, old_password: str, new_password: str) -> 
             """,
             (new_hash, user_id)
         )
-
         connection.commit()
-
         return True, "Пароль изменён"
-
     except Error as error:
         print("Ошибка при смене пароля:")
         print(error)
         return False, "Не удалось изменить пароль"
-
     finally:
         if connection.is_connected():
             cursor.close()

@@ -1,3 +1,5 @@
 PyQt6
 mysql-connector-python
 pyinstaller
+bcrypt
+python-dotenv
