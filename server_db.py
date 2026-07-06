@@ -475,6 +475,14 @@ def create_auth_token(user_id: int) -> str | None:
         token = secrets.token_urlsafe(32)
         token_hash = hash_token(token)
 
+        cursor.execute(
+            """
+            DELETE FROM user_tokens
+            WHERE user_id = %s
+            """,
+            (user_id,)
+        )
+
         query = """
             INSERT INTO user_tokens (user_id, token_hash)
             VALUES (%s, %s)

@@ -49,6 +49,7 @@ from server_db import (
 
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 5000
+MAX_MESSAGE_LENGTH = 4096
 
 
 # Словарь онлайн-пользователей:
@@ -284,11 +285,15 @@ def require_admin(current_user):
 
 
 
-def handle_register(client_socket, request):
+def handle_register(client_socket, current_user, request):
     """
     Обрабатывает команду register.
     Создаёт обычного пользователя с ролью user.
     """
+    if current_user is not None:
+        send_json(client_socket, make_error("Сначала выйдите из текущего аккаунта"))
+        return
+
     username = request.get("username", "").strip()
     password = request.get("password", "")
 
@@ -310,10 +315,14 @@ def handle_register(client_socket, request):
     broadcast_users_status()
 
 
-def handle_login(client_socket, request):
+def handle_login(client_socket, current_user, request):
     """
     Обрабатывает команду login.
     """
+    if current_user is not None:
+        send_json(client_socket, make_error("Вы уже авторизованы в этом соединении"))
+        return current_user
+
     username = request.get("username", "").strip()
     password = request.get("password", "")
 
@@ -384,10 +393,14 @@ def handle_login(client_socket, request):
 
 
 
-def handle_login_token(client_socket, request):
+def handle_login_token(client_socket, current_user, request):
     """
     Обрабатывает автоматический вход по токену.
     """
+    if current_user is not None:
+        send_json(client_socket, make_error("Вы уже авторизованы в этом соединении"))
+        return current_user
+
     token = request.get("token", "")
 
     if not token:
@@ -548,6 +561,10 @@ def handle_send_room_message(client_socket, current_user, request):
 
     if not content:
         send_json(client_socket, make_error("Введите текст сообщения"))
+        return
+
+    if len(content) > MAX_MESSAGE_LENGTH:
+        send_json(client_socket, make_error(f"Сообщение слишком длинное. Максимум {MAX_MESSAGE_LENGTH} символов"))
         return
 
     message_id = save_room_message(room_id, current_user["id"], content, reply_to_message_id)
@@ -908,6 +925,10 @@ def handle_send_message(client_socket, current_user, request):
 
     if not receiver_id or not content:
         send_json(client_socket, make_error("Не указан получатель или текст сообщения"))
+        return
+
+    if len(content) > MAX_MESSAGE_LENGTH:
+        send_json(client_socket, make_error(f"Сообщение слишком длинное. Максимум {MAX_MESSAGE_LENGTH} символов"))
         return
 
     try:
@@ -1501,15 +1522,15 @@ def handle_client(client_socket, client_address):
                 continue
 
             if action == "register":
-                handle_register(client_socket, request)
+                handle_register(client_socket, current_user, request)
                 continue
 
             if action == "login":
-                current_user = handle_login(client_socket, request)
+                current_user = handle_login(client_socket, current_user, request)
                 continue
 
             if action == "login_token":
-                current_user = handle_login_token(client_socket, request)
+                current_user = handle_login_token(client_socket, current_user, request)
                 continue
 
             if action == "logout_token":
