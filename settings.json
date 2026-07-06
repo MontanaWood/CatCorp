@@ -1,7 +1,10 @@
 {
-    "sound_enabled": true,
-    "tray_notifications_enabled": false,
+    "sound_enabled": false,
+    "tray_notifications_enabled": true,
     "minimize_to_tray": false,
     "hide_notification_preview": false,
-    "remember_login": false
+    "remember_login": false,
+    "muted_room_ids": [],
+    "muted_user_ids": [],
+    "mute_all_chats": false
 }

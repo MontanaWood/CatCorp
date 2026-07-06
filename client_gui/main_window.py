@@ -40,7 +40,9 @@ DEFAULT_SETTINGS = {
     "tray_notifications_enabled": True,
     "minimize_to_tray": True,
     "hide_notification_preview": False,
-    "remember_login": False
+    "remember_login": False,
+    "muted_room_ids": [],
+    "muted_user_ids": []
 }
 
 
@@ -79,6 +81,12 @@ def load_settings() -> dict:
 
         settings = DEFAULT_SETTINGS.copy()
         settings.update(loaded)
+
+        if not isinstance(settings.get("muted_room_ids"), list):
+            settings["muted_room_ids"] = []
+
+        if not isinstance(settings.get("muted_user_ids"), list):
+            settings["muted_user_ids"] = []
 
         return settings
 
@@ -970,7 +978,11 @@ class MainWindow(QWidget):
             unread_count = int(chat.get("unread_count", 0))
 
             if chat_type == "room":
+                room_id = chat.get("room_id") or chat.get("id")
                 item_text = f"{display_name} [группа]"
+
+                if self.is_room_muted(room_id):
+                    item_text += " [без уведомлений]"
 
                 if unread_count > 0:
                     item_text += f" ({unread_count})"
@@ -984,6 +996,9 @@ class MainWindow(QWidget):
                     item_text = f"{'📌 ' if pinned else ''}{display_name} [{status}, {profile_status}]"
                 else:
                     item_text = f"{'📌 ' if pinned else ''}{display_name} [{status}]"
+
+                if self.is_user_muted(chat.get("id")):
+                    item_text += " [без уведомлений]"
 
                 if unread_count > 0:
                     item_text += f" ({unread_count})"
@@ -1079,18 +1094,24 @@ class MainWindow(QWidget):
         menu = QMenu(self)
 
         if chat.get("chat_type", "user") == "room":
+            room_id = self.get_room_id_from_chat(chat)
+            muted = self.is_room_muted(room_id)
+
             members_action = QAction("Участники", self)
             add_members_action = QAction("Добавить участников", self)
+            mute_action = QAction("Включить уведомления" if muted else "Отключить уведомления", self)
             leave_action = QAction("Выйти из группы", self)
             delete_action = QAction("Удалить группу", self)
 
             members_action.triggered.connect(lambda: self.show_room_members(chat))
             add_members_action.triggered.connect(lambda: self.add_members_to_room(chat))
+            mute_action.triggered.connect(lambda: self.toggle_room_notifications(chat))
             leave_action.triggered.connect(lambda: self.leave_room(chat))
             delete_action.triggered.connect(lambda: self.delete_room(chat))
 
             menu.addAction(members_action)
             menu.addAction(add_members_action)
+            menu.addAction(mute_action)
             menu.addSeparator()
             menu.addAction(leave_action)
             menu.addAction(delete_action)
@@ -1098,14 +1119,18 @@ class MainWindow(QWidget):
             return
 
         pinned = bool(chat.get("pinned", False))
+        muted = self.is_user_muted(chat.get("id"))
 
         pin_action = QAction("Открепить чат" if pinned else "Закрепить чат", self)
+        mute_action = QAction("Включить уведомления" if muted else "Отключить уведомления", self)
         hide_action = QAction("Удалить чат у себя", self)
 
         pin_action.triggered.connect(lambda: self.toggle_pin_chat(chat))
+        mute_action.triggered.connect(lambda: self.toggle_user_notifications(chat))
         hide_action.triggered.connect(lambda: self.hide_chat_for_me(chat))
 
         menu.addAction(pin_action)
+        menu.addAction(mute_action)
         menu.addAction(hide_action)
 
         menu.exec(self.chats_list.mapToGlobal(position))
@@ -1660,6 +1685,122 @@ class MainWindow(QWidget):
         except RuntimeError:
             pass
 
+    def get_muted_room_ids(self) -> set[int]:
+        """
+        Возвращает локальный список групп с отключёнными уведомлениями.
+        Хранится в settings.json рядом с exe.
+        """
+        raw_ids = self.settings.get("muted_room_ids", [])
+        result = set()
+
+        if not isinstance(raw_ids, list):
+            return result
+
+        for room_id in raw_ids:
+            try:
+                result.add(int(room_id))
+            except (TypeError, ValueError):
+                pass
+
+        return result
+
+    def is_room_muted(self, room_id) -> bool:
+        """
+        Проверяет, отключены ли уведомления для группы.
+        """
+        try:
+            room_id = int(room_id)
+        except (TypeError, ValueError):
+            return False
+
+        return room_id in self.get_muted_room_ids()
+
+    def set_room_muted(self, room_id, muted: bool):
+        """
+        Включает или отключает уведомления для конкретной группы.
+        """
+        try:
+            room_id = int(room_id)
+        except (TypeError, ValueError):
+            return
+
+        muted_ids = self.get_muted_room_ids()
+
+        if muted:
+            muted_ids.add(room_id)
+        else:
+            muted_ids.discard(room_id)
+
+        self.settings["muted_room_ids"] = sorted(muted_ids)
+        save_settings(self.settings)
+        self.render_recent_chats()
+
+    def toggle_room_notifications(self, chat: dict):
+        """
+        Переключает уведомления группы из контекстного меню.
+        """
+        room_id = self.get_room_id_from_chat(chat)
+        currently_muted = self.is_room_muted(room_id)
+        self.set_room_muted(room_id, not currently_muted)
+
+    def get_muted_user_ids(self) -> set[int]:
+        """
+        Возвращает локальный список личных чатов с отключёнными уведомлениями.
+        Хранится в settings.json рядом с exe.
+        """
+        raw_ids = self.settings.get("muted_user_ids", [])
+        result = set()
+
+        if not isinstance(raw_ids, list):
+            return result
+
+        for user_id in raw_ids:
+            try:
+                result.add(int(user_id))
+            except (TypeError, ValueError):
+                pass
+
+        return result
+
+    def is_user_muted(self, user_id) -> bool:
+        """
+        Проверяет, отключены ли уведомления для личного чата.
+        """
+        try:
+            user_id = int(user_id)
+        except (TypeError, ValueError):
+            return False
+
+        return user_id in self.get_muted_user_ids()
+
+    def set_user_muted(self, user_id, muted: bool):
+        """
+        Включает или отключает уведомления для конкретного личного чата.
+        """
+        try:
+            user_id = int(user_id)
+        except (TypeError, ValueError):
+            return
+
+        muted_ids = self.get_muted_user_ids()
+
+        if muted:
+            muted_ids.add(user_id)
+        else:
+            muted_ids.discard(user_id)
+
+        self.settings["muted_user_ids"] = sorted(muted_ids)
+        save_settings(self.settings)
+        self.render_recent_chats()
+
+    def toggle_user_notifications(self, chat: dict):
+        """
+        Переключает уведомления личного чата из контекстного меню.
+        """
+        user_id = chat.get("id")
+        currently_muted = self.is_user_muted(user_id)
+        self.set_user_muted(user_id, not currently_muted)
+
     def send_message(self):
         if not self.selected_user:
             QMessageBox.information(self, "Нет получателя", "Сначала выберите чат или нажмите '+ Новый чат'")
@@ -1714,14 +1855,17 @@ class MainWindow(QWidget):
             return
 
         sender_id = message.get("sender_id")
-        self.play_new_message_sound()
+        muted = self.is_user_muted(sender_id)
 
         if self.selected_user and self.selected_chat_type == "user" and self.selected_user.get("id") == sender_id:
             self.append_message(message)
             self.mark_current_chat_read(sender_id)
         else:
-            sender_name = message.get("sender_username", "Новое сообщение")
-            self.show_tray_notification(sender_name, short_text(message.get("content", ""), 120))
+            if not muted:
+                sender_name = message.get("sender_username", "Новое сообщение")
+                self.play_new_message_sound()
+                self.show_tray_notification(sender_name, short_text(message.get("content", ""), 120))
+
             self.load_recent_chats()
 
     def handle_room_typing(self, typing_data: dict):
@@ -1781,8 +1925,11 @@ class MainWindow(QWidget):
                 self.load_recent_chats()
                 return
 
-        sender_name = message.get("sender_username", "Группа")
-        self.show_tray_notification(f"Группа: {sender_name}", short_text(message.get("content", ""), 120))
+        if not self.is_room_muted(room_id):
+            sender_name = message.get("sender_username", "Группа")
+            self.play_new_message_sound()
+            self.show_tray_notification(f"Группа: {sender_name}", short_text(message.get("content", ""), 120))
+
         self.load_recent_chats()
 
     def handle_edited_message(self, message: dict):
