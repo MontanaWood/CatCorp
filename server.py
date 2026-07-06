@@ -40,7 +40,10 @@ from server_db import (
     delete_room,
     mark_room_as_read,
     get_room_unread_count,
-    edit_room_message
+    edit_room_message,
+    get_login_block_status,
+    register_failed_login_attempt,
+    reset_login_attempts
 )
 
 
@@ -318,11 +321,25 @@ def handle_login(client_socket, request):
         send_json(client_socket, make_error("Введите логин и пароль"))
         return None
 
+    is_blocked, block_message = get_login_block_status(username)
+
+    if is_blocked:
+        send_json(client_socket, make_error(block_message or "Слишком много попыток входа. Повторите позже."))
+        return None
+
     user = authenticate_user(username, password)
 
     if user is None:
-        send_json(client_socket, make_error("Неверный логин или пароль"))
+        just_blocked, block_message = register_failed_login_attempt(username)
+
+        if just_blocked:
+            send_json(client_socket, make_error(block_message or "Слишком много попыток входа. Повторите позже."))
+        else:
+            send_json(client_socket, make_error("Неверный логин или пароль"))
+
         return None
+
+    reset_login_attempts(username)
 
     user_id = user["id"]
     update_last_login(user_id)

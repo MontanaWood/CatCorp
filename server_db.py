@@ -7,6 +7,7 @@ import os
 import mysql.connector
 from mysql.connector import Error
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
 
 
 load_dotenv()
@@ -35,6 +36,10 @@ DB_CONFIG = {
     "database": os.getenv("CATCORP_DB_NAME", "catcorp"),
     "charset": "utf8mb4"
 }
+
+
+MAX_LOGIN_ATTEMPTS = 5
+LOGIN_LOCK_MINUTES = 15
 
 
 def hash_token(token: str) -> str:
@@ -140,6 +145,238 @@ def get_connection():
         print(error)
         print("Проверьте .env: CATCORP_DB_HOST, CATCORP_DB_PORT, CATCORP_DB_USER, CATCORP_DB_PASSWORD, CATCORP_DB_NAME")
         return None
+
+def ensure_login_attempts_table() -> bool:
+    """
+    Создаёт таблицу неудачных попыток входа.
+    """
+    connection = get_connection()
+
+    if connection is None:
+        return False
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                username VARCHAR(50) PRIMARY KEY,
+                failed_count INT NOT NULL DEFAULT 0,
+                first_failed_at DATETIME NULL,
+                last_failed_at DATETIME NULL,
+                locked_until DATETIME NULL
+            )
+        """)
+
+        connection.commit()
+        return True
+
+    except Error as error:
+        print("Ошибка при создании таблицы login_attempts:")
+        print(error)
+        return False
+
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def get_login_block_status(username: str) -> tuple[bool, str]:
+    """
+    Проверяет, заблокирован ли вход для логина.
+    """
+    username = str(username or "").strip()
+
+    if not username:
+        return False, ""
+
+    ensure_login_attempts_table()
+    connection = get_connection()
+
+    if connection is None:
+        return False, ""
+
+    try:
+        cursor = connection.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT locked_until
+            FROM login_attempts
+            WHERE username = %s
+            LIMIT 1
+            """,
+            (username,)
+        )
+
+        row = cursor.fetchone()
+
+        if row is None:
+            return False, ""
+
+        locked_until = row.get("locked_until")
+
+        if locked_until is None:
+            return False, ""
+
+        now = datetime.now()
+
+        if locked_until <= now:
+            cursor.execute(
+                """
+                UPDATE login_attempts
+                SET failed_count = 0,
+                    first_failed_at = NULL,
+                    last_failed_at = NULL,
+                    locked_until = NULL
+                WHERE username = %s
+                """,
+                (username,)
+            )
+            connection.commit()
+            return False, ""
+
+        minutes_left = max(1, int((locked_until - now).total_seconds() // 60) + 1)
+        return True, f"Слишком много попыток входа. Повторите через {minutes_left} мин."
+
+    except Error as error:
+        print("Ошибка при проверке блокировки входа:")
+        print(error)
+        return False, ""
+
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def register_failed_login_attempt(username: str) -> tuple[bool, str]:
+    """
+    Записывает неудачную попытку входа и при необходимости ставит блокировку.
+    """
+    username = str(username or "").strip()
+
+    if not username:
+        return False, ""
+
+    ensure_login_attempts_table()
+    connection = get_connection()
+
+    if connection is None:
+        return False, ""
+
+    try:
+        cursor = connection.cursor(dictionary=True)
+        now = datetime.now()
+
+        cursor.execute(
+            """
+            SELECT failed_count, locked_until
+            FROM login_attempts
+            WHERE username = %s
+            LIMIT 1
+            """,
+            (username,)
+        )
+
+        row = cursor.fetchone()
+
+        if row is None:
+            failed_count = 1
+
+            cursor.execute(
+                """
+                INSERT INTO login_attempts
+                    (username, failed_count, first_failed_at, last_failed_at, locked_until)
+                VALUES
+                    (%s, %s, %s, %s, NULL)
+                """,
+                (username, failed_count, now, now)
+            )
+        else:
+            locked_until = row.get("locked_until")
+
+            if locked_until is not None and locked_until > now:
+                minutes_left = max(1, int((locked_until - now).total_seconds() // 60) + 1)
+                return True, f"Слишком много попыток входа. Повторите через {minutes_left} мин."
+
+            failed_count = int(row.get("failed_count") or 0) + 1
+            locked_until = None
+
+            if failed_count >= MAX_LOGIN_ATTEMPTS:
+                locked_until = now + timedelta(minutes=LOGIN_LOCK_MINUTES)
+
+            cursor.execute(
+                """
+                UPDATE login_attempts
+                SET failed_count = %s,
+                    last_failed_at = %s,
+                    locked_until = %s,
+                    first_failed_at = COALESCE(first_failed_at, %s)
+                WHERE username = %s
+                """,
+                (failed_count, now, locked_until, now, username)
+            )
+
+        connection.commit()
+
+        if failed_count >= MAX_LOGIN_ATTEMPTS:
+            return True, f"Слишком много попыток входа. Повторите через {LOGIN_LOCK_MINUTES} мин."
+
+        return False, ""
+
+    except Error as error:
+        print("Ошибка при записи неудачной попытки входа:")
+        print(error)
+        return False, ""
+
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def reset_login_attempts(username: str) -> bool:
+    """
+    Сбрасывает счётчик неудачных попыток после успешного входа.
+    """
+    username = str(username or "").strip()
+
+    if not username:
+        return True
+
+    ensure_login_attempts_table()
+    connection = get_connection()
+
+    if connection is None:
+        return False
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            DELETE FROM login_attempts
+            WHERE username = %s
+            """,
+            (username,)
+        )
+
+        connection.commit()
+        return True
+
+    except Error as error:
+        print("Ошибка при сбросе попыток входа:")
+        print(error)
+        return False
+
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
 
 def ensure_user_profile_columns() -> bool:
     """
