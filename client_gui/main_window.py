@@ -10,7 +10,7 @@ import winsound
 from pathlib import Path
 from datetime import datetime, timedelta
 
-from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer, QPoint, QSize
 from PyQt6.QtWidgets import (
     QWidget,
     QLabel,
@@ -31,7 +31,9 @@ from PyQt6.QtWidgets import (
     QListView,
     QSystemTrayIcon,
     QApplication,
-    QStyle
+    QStyle,
+    QFrame,
+    QAbstractItemView
 )
 from PyQt6.QtGui import QAction, QIcon, QShortcut, QKeySequence
 
@@ -157,6 +159,123 @@ QMenu::item:selected {
 QDialogButtonBox QPushButton {
     min-width: 80px;
 }
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 2px;
+}
+
+QScrollBar::handle:vertical {
+    background: #cbd5e1;
+    border-radius: 5px;
+    min-height: 32px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #94a3b8;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: transparent;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 2px;
+}
+
+QScrollBar::handle:horizontal {
+    background: #cbd5e1;
+    border-radius: 5px;
+    min-width: 32px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: #94a3b8;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: transparent;
+}
+
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
+QFrame#MessageBubbleOwn {
+    background-color: #dbeafe;
+    border: 1px solid #bfdbfe;
+    border-radius: 12px;
+}
+
+QFrame#MessageBubbleOther {
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+}
+
+QFrame#FileBubbleOwn {
+    background-color: #e0f2fe;
+    border: 1px solid #7dd3fc;
+    border-radius: 12px;
+}
+
+QFrame#FileBubbleOther {
+    background-color: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 12px;
+}
+
+QFrame#ReplyPreview {
+    background-color: #eff6ff;
+    border-left: 3px solid #2563eb;
+    border-radius: 6px;
+}
+
+QLabel#MessageSender {
+    background-color: transparent;
+    font-weight: 600;
+    color: #111827;
+}
+
+QLabel#MessageText {
+    background-color: transparent;
+    color: #111827;
+}
+
+QLabel#MessageMeta {
+    background-color: transparent;
+    color: #64748b;
+    font-size: 8pt;
+}
+
+QLabel#FileTitle {
+    background-color: transparent;
+    color: #111827;
+    font-weight: 600;
+}
+
+QLabel#FileHint {
+    background-color: transparent;
+    color: #64748b;
+    font-size: 8pt;
+}
+
+QWidget#MessageRow {
+    background-color: transparent;
+}
 """
 
 
@@ -252,6 +371,123 @@ QMenu::item:selected {
 
 QDialogButtonBox QPushButton {
     min-width: 80px;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 2px;
+}
+
+QScrollBar::handle:vertical {
+    background: #4b5563;
+    border-radius: 5px;
+    min-height: 32px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #6b7280;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: transparent;
+}
+
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 2px;
+}
+
+QScrollBar::handle:horizontal {
+    background: #4b5563;
+    border-radius: 5px;
+    min-width: 32px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background: #6b7280;
+}
+
+QScrollBar::add-line:horizontal,
+QScrollBar::sub-line:horizontal {
+    width: 0px;
+    background: transparent;
+}
+
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {
+    background: transparent;
+}
+
+QFrame#MessageBubbleOwn {
+    background-color: #1d4ed8;
+    border: 1px solid #2563eb;
+    border-radius: 12px;
+}
+
+QFrame#MessageBubbleOther {
+    background-color: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 12px;
+}
+
+QFrame#FileBubbleOwn {
+    background-color: #0f766e;
+    border: 1px solid #14b8a6;
+    border-radius: 12px;
+}
+
+QFrame#FileBubbleOther {
+    background-color: #111827;
+    border: 1px solid #4b5563;
+    border-radius: 12px;
+}
+
+QFrame#ReplyPreview {
+    background-color: #111827;
+    border-left: 3px solid #60a5fa;
+    border-radius: 6px;
+}
+
+QLabel#MessageSender {
+    background-color: transparent;
+    font-weight: 600;
+    color: #f9fafb;
+}
+
+QLabel#MessageText {
+    background-color: transparent;
+    color: #f9fafb;
+}
+
+QLabel#MessageMeta {
+    background-color: transparent;
+    color: #cbd5e1;
+    font-size: 8pt;
+}
+
+QLabel#FileTitle {
+    background-color: transparent;
+    color: #f9fafb;
+    font-weight: 600;
+}
+
+QLabel#FileHint {
+    background-color: transparent;
+    color: #cbd5e1;
+    font-size: 8pt;
+}
+
+QWidget#MessageRow {
+    background-color: transparent;
 }
 """
 
@@ -959,6 +1195,11 @@ class MainWindow(QWidget):
         self.new_group_button.clicked.connect(self.open_new_group_dialog)
 
         self.chats_list = QListWidget()
+        self.chats_list.setWordWrap(True)
+        self.chats_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.chats_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.chats_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.chats_list.verticalScrollBar().setSingleStep(12)
         self.chats_list.itemClicked.connect(self.handle_chat_selected)
         self.chats_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.chats_list.customContextMenuRequested.connect(self.open_chat_context_menu)
@@ -992,7 +1233,10 @@ class MainWindow(QWidget):
         self.messages_list = QListWidget()
         self.messages_list.setAcceptDrops(True)
         self.messages_list.setWordWrap(True)
+        self.messages_list.setSpacing(8)
         self.messages_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.messages_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.messages_list.verticalScrollBar().setSingleStep(12)
         self.messages_list.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.messages_list.setResizeMode(QListView.ResizeMode.Adjust)
         self.messages_list.setUniformItemSizes(False)
@@ -1841,45 +2085,265 @@ class MainWindow(QWidget):
 
         self.messages_list.scrollToBottom()
 
+    def is_own_message(self, message: dict) -> bool:
+        """
+        Проверяет, является ли сообщение исходящим.
+        """
+        if not self.current_user:
+            return False
+
+        try:
+            return int(message.get("sender_id")) == int(self.current_user.get("id"))
+        except (TypeError, ValueError):
+            return False
+
+    def format_message_time(self, sent_at: str) -> str:
+        """
+        Возвращает короткое время сообщения для пузырька.
+        """
+        sent_at = str(sent_at or "").strip()
+
+        if len(sent_at) >= 16 and sent_at[10] in (" ", "T"):
+            return sent_at[11:16]
+
+        return sent_at
+
+    def message_row_width(self) -> int:
+        """
+        Возвращает рабочую ширину строки сообщения с небольшими боковыми отступами.
+        """
+        if not hasattr(self, "messages_list"):
+            return 620
+
+        viewport_width = self.messages_list.viewport().width()
+
+        if viewport_width <= 0:
+            return 620
+
+        return max(260, viewport_width - 28)
+
+    def message_bubble_max_width(self) -> int:
+        """
+        Ограничивает ширину пузырька, чтобы сообщения не растягивались на весь чат.
+        """
+        row_width = self.message_row_width()
+        return max(240, min(620, int(row_width * 0.76)))
+
+    def create_message_widget(self, message: dict) -> QWidget:
+        """
+        Создаёт визуальный пузырёк сообщения.
+        """
+        is_own = self.is_own_message(message)
+        message_type = message.get("message_type", "text")
+
+        row = QWidget()
+        row.setObjectName("MessageRow")
+
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(10, 4, 18, 4)
+        row_layout.setSpacing(0)
+
+        if is_own:
+            row_layout.addStretch(1)
+
+        bubble = QFrame()
+        bubble.setObjectName(
+            ("FileBubbleOwn" if is_own else "FileBubbleOther")
+            if message_type == "file"
+            else ("MessageBubbleOwn" if is_own else "MessageBubbleOther")
+        )
+        bubble_max_width = self.message_bubble_max_width()
+        bubble.setMaximumWidth(bubble_max_width)
+
+        bubble_layout = QVBoxLayout()
+        bubble_layout.setContentsMargins(10, 8, 10, 8)
+        bubble_layout.setSpacing(5)
+
+        sender_name = "Вы" if is_own else str(message.get("sender_username", "unknown"))
+        sender_label = QLabel(sender_name)
+        sender_label.setObjectName("MessageSender")
+        sender_label.setWordWrap(False)
+        sender_label.setMaximumWidth(max(160, bubble_max_width - 26))
+        bubble_layout.addWidget(sender_label)
+
+        reply_content = message.get("reply_content")
+        reply_sender = message.get("reply_sender_username")
+
+        if reply_content:
+            reply_frame = QFrame()
+            reply_frame.setObjectName("ReplyPreview")
+            reply_layout = QVBoxLayout()
+            reply_layout.setContentsMargins(8, 5, 8, 5)
+            reply_layout.setSpacing(2)
+
+            reply_text = QLabel(f"Ответ на {reply_sender}: {short_text(reply_content, 90)}")
+            reply_text.setObjectName("MessageMeta")
+            reply_text.setWordWrap(True)
+            reply_text.setMaximumWidth(max(150, bubble_max_width - 44))
+            reply_layout.addWidget(reply_text)
+
+            reply_frame.setLayout(reply_layout)
+            bubble_layout.addWidget(reply_frame)
+
+        content = str(message.get("content", ""))
+
+        if message_type == "file":
+            file_name = str(message.get("file_original_name") or content or "Файл")
+            file_size = format_file_size(message.get("file_size_bytes"))
+
+            file_title = QLabel(f"📎 {file_name}")
+            file_title.setObjectName("FileTitle")
+            file_title.setWordWrap(True)
+            file_title.setMaximumWidth(max(160, bubble_max_width - 26))
+            bubble_layout.addWidget(file_title)
+
+            file_hint = QLabel(f"{file_size} · двойной клик или ПКМ → Скачать")
+            file_hint.setObjectName("FileHint")
+            file_hint.setWordWrap(True)
+            file_hint.setMaximumWidth(max(160, bubble_max_width - 26))
+            bubble_layout.addWidget(file_hint)
+        else:
+            content_label = QLabel(content)
+            content_label.setObjectName("MessageText")
+            content_label.setWordWrap(True)
+            content_label.setMaximumWidth(max(160, bubble_max_width - 26))
+            content_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            bubble_layout.addWidget(content_label)
+
+        sent_at = self.format_message_time(message.get("sent_at", ""))
+        edited_at = message.get("edited_at")
+        meta_text = sent_at
+
+        if edited_at:
+            meta_text += " · изменено"
+
+        meta_label = QLabel(meta_text)
+        meta_label.setObjectName("MessageMeta")
+        meta_label.setMaximumWidth(max(160, bubble_max_width - 26))
+        meta_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        bubble_layout.addWidget(meta_label)
+
+        bubble.setLayout(bubble_layout)
+        row_layout.addWidget(bubble)
+
+        if not is_own:
+            row_layout.addStretch(1)
+
+        row.setLayout(row_layout)
+        return row
+
+    def update_message_item_size(self, item: QListWidgetItem, widget: QWidget):
+        """
+        Принудительно пересчитывает высоту кастомного элемента сообщения.
+
+        Без этого QLabel с переносом строк иногда считает высоту слишком рано,
+        и нижняя часть пузырька или карточки файла обрезается.
+        """
+        if item is None or widget is None or not hasattr(self, "messages_list"):
+            return
+
+        row_width = self.message_row_width()
+        widget.setMinimumWidth(row_width)
+        widget.setMaximumWidth(row_width)
+
+        layout = widget.layout()
+
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+
+        widget.updateGeometry()
+        widget.adjustSize()
+
+        height = max(widget.sizeHint().height(), widget.minimumSizeHint().height()) + 24
+        item.setSizeHint(QSize(row_width, height))
+
+    def refresh_message_widget_sizes(self):
+        """
+        Пересчитывает ширину пузырьков после изменения размера окна.
+        """
+        if not hasattr(self, "messages_list"):
+            return
+
+        max_width = self.message_bubble_max_width()
+
+        for index in range(self.messages_list.count()):
+            item = self.messages_list.item(index)
+            widget = self.messages_list.itemWidget(item)
+
+            if widget is None:
+                continue
+
+            for frame in widget.findChildren(QFrame):
+                if frame.objectName() in {
+                    "MessageBubbleOwn",
+                    "MessageBubbleOther",
+                    "FileBubbleOwn",
+                    "FileBubbleOther"
+                }:
+                    frame.setMaximumWidth(max_width)
+
+            for label in widget.findChildren(QLabel):
+                if label.objectName() in {
+                    "MessageSender",
+                    "MessageText",
+                    "MessageMeta",
+                    "FileTitle",
+                    "FileHint"
+                }:
+                    label.setMaximumWidth(max(160, max_width - 26))
+
+            self.update_message_item_size(item, widget)
+
     def format_message_item(self, message: dict) -> str:
+        """
+        Текстовый fallback для сообщения.
+        """
         sender_name = str(message.get("sender_username", "unknown"))
         content = str(message.get("content", ""))
         sent_at = str(message.get("sent_at", ""))
         edited_at = message.get("edited_at")
-        reply_content = message.get("reply_content")
-        reply_sender = message.get("reply_sender_username")
         message_type = message.get("message_type", "text")
-
-        parts = []
-
-        if reply_content:
-            parts.append(f"> Ответ на {reply_sender}: {short_text(reply_content, 80)}")
 
         title = f"{sender_name} [{sent_at}]"
 
         if edited_at:
             title += " (изменено)"
 
-        parts.append(title)
-
         if message_type == "file":
             file_name = message.get("file_original_name") or content or "Файл"
             file_size = format_file_size(message.get("file_size_bytes"))
-            parts.append(f"📎 {file_name}")
-            parts.append(f"{file_size} — двойной клик, чтобы скачать")
-        else:
-            parts.append(content)
+            return f"{title}\n📎 {file_name}\n{file_size} — двойной клик, чтобы скачать"
 
-        return "\n".join(parts)
+        return f"{title}\n{content}"
 
     def append_message(self, message: dict):
         self.current_messages.append(message)
 
-        item = QListWidgetItem(self.format_message_item(message))
+        item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, message)
 
-        item.setTextAlignment(Qt.AlignmentFlag.AlignLeft)
+        widget = self.create_message_widget(message)
+
         self.messages_list.addItem(item)
+        self.messages_list.setItemWidget(item, widget)
+        self.update_message_item_size(item, widget)
+
+        QTimer.singleShot(
+            0,
+            lambda current_item=item, current_widget=widget: self.update_message_item_size(
+                current_item,
+                current_widget
+            )
+        )
+        QTimer.singleShot(
+            30,
+            lambda current_item=item, current_widget=widget: self.update_message_item_size(
+                current_item,
+                current_widget
+            )
+        )
+
         self.messages_list.scrollToBottom()
 
     def open_message_context_menu(self, position: QPoint):
@@ -2583,6 +3047,7 @@ class MainWindow(QWidget):
         super().resizeEvent(event)
 
         if hasattr(self, "messages_list"):
+            self.refresh_message_widget_sizes()
             self.messages_list.doItemsLayout()
 
     def handle_disconnected(self):
