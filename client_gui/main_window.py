@@ -44,6 +44,7 @@ DEFAULT_SETTINGS = {
     "minimize_to_tray": True,
     "hide_notification_preview": False,
     "remember_login": False,
+    "theme": "light",
     "muted_room_ids": [],
     "muted_user_ids": []
 }
@@ -55,6 +56,234 @@ STATUS_LABELS = {
     "do_not_disturb": "не беспокоить",
     "away": "отошёл"
 }
+
+
+THEME_LABELS = {
+    "light": "Светлая",
+    "dark": "Тёмная"
+}
+
+
+LIGHT_THEME_QSS = """
+QWidget {
+    background-color: #f4f6fb;
+    color: #1f2937;
+    font-size: 10pt;
+}
+
+QDialog {
+    background-color: #f4f6fb;
+}
+
+QLabel {
+    color: #1f2937;
+}
+
+QLineEdit, QComboBox {
+    background-color: #ffffff;
+    color: #111827;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 7px 9px;
+    selection-background-color: #2563eb;
+    selection-color: #ffffff;
+}
+
+QLineEdit:focus, QComboBox:focus {
+    border: 1px solid #2563eb;
+}
+
+QPushButton {
+    background-color: #2563eb;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    padding: 7px 12px;
+}
+
+QPushButton:hover {
+    background-color: #1d4ed8;
+}
+
+QPushButton:pressed {
+    background-color: #1e40af;
+}
+
+QPushButton:disabled {
+    background-color: #94a3b8;
+    color: #e5e7eb;
+}
+
+QCheckBox {
+    spacing: 8px;
+}
+
+QListWidget {
+    background-color: #ffffff;
+    color: #111827;
+    border: 1px solid #dbe3ef;
+    border-radius: 10px;
+    padding: 4px;
+}
+
+QListWidget::item {
+    padding: 8px;
+    border-radius: 8px;
+}
+
+QListWidget::item:selected {
+    background-color: #dbeafe;
+    color: #111827;
+}
+
+QListWidget::item:hover {
+    background-color: #eef2ff;
+}
+
+QMenu {
+    background-color: #ffffff;
+    color: #111827;
+    border: 1px solid #dbe3ef;
+}
+
+QMenu::item {
+    padding: 7px 22px;
+}
+
+QMenu::item:selected {
+    background-color: #dbeafe;
+}
+
+QDialogButtonBox QPushButton {
+    min-width: 80px;
+}
+"""
+
+
+DARK_THEME_QSS = """
+QWidget {
+    background-color: #111827;
+    color: #e5e7eb;
+    font-size: 10pt;
+}
+
+QDialog {
+    background-color: #111827;
+}
+
+QLabel {
+    color: #e5e7eb;
+}
+
+QLineEdit, QComboBox {
+    background-color: #1f2937;
+    color: #f9fafb;
+    border: 1px solid #374151;
+    border-radius: 8px;
+    padding: 7px 9px;
+    selection-background-color: #3b82f6;
+    selection-color: #ffffff;
+}
+
+QLineEdit:focus, QComboBox:focus {
+    border: 1px solid #60a5fa;
+}
+
+QPushButton {
+    background-color: #2563eb;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    padding: 7px 12px;
+}
+
+QPushButton:hover {
+    background-color: #3b82f6;
+}
+
+QPushButton:pressed {
+    background-color: #1d4ed8;
+}
+
+QPushButton:disabled {
+    background-color: #374151;
+    color: #9ca3af;
+}
+
+QCheckBox {
+    spacing: 8px;
+}
+
+QListWidget {
+    background-color: #1f2937;
+    color: #f9fafb;
+    border: 1px solid #374151;
+    border-radius: 10px;
+    padding: 4px;
+}
+
+QListWidget::item {
+    padding: 8px;
+    border-radius: 8px;
+}
+
+QListWidget::item:selected {
+    background-color: #1d4ed8;
+    color: #ffffff;
+}
+
+QListWidget::item:hover {
+    background-color: #374151;
+}
+
+QMenu {
+    background-color: #1f2937;
+    color: #f9fafb;
+    border: 1px solid #374151;
+}
+
+QMenu::item {
+    padding: 7px 22px;
+}
+
+QMenu::item:selected {
+    background-color: #2563eb;
+}
+
+QDialogButtonBox QPushButton {
+    min-width: 80px;
+}
+"""
+
+
+def normalize_theme(theme: str) -> str:
+    """
+    Возвращает корректное имя темы.
+    """
+    theme = str(theme or "").strip().lower()
+
+    if theme not in THEME_LABELS:
+        return "light"
+
+    return theme
+
+
+def apply_app_theme(settings: dict | None = None):
+    """
+    Применяет тему ко всему QApplication.
+    """
+    app = QApplication.instance()
+
+    if app is None:
+        return
+
+    settings = settings or {}
+    theme = normalize_theme(settings.get("theme", DEFAULT_SETTINGS.get("theme", "light")))
+
+    if theme == "dark":
+        app.setStyleSheet(DARK_THEME_QSS)
+    else:
+        app.setStyleSheet(LIGHT_THEME_QSS)
 
 
 MAX_FILE_SIZE = 25 * 1024 * 1024
@@ -156,6 +385,8 @@ def load_settings() -> dict:
 
         if not isinstance(settings.get("muted_user_ids"), list):
             settings["muted_user_ids"] = []
+
+        settings["theme"] = normalize_theme(settings.get("theme", DEFAULT_SETTINGS["theme"]))
 
         return settings
 
@@ -395,7 +626,17 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
 
         self.setWindowTitle("Настройки")
-        self.resize(380, 260)
+        self.resize(420, 330)
+
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItem(THEME_LABELS["light"], "light")
+        self.theme_combo.addItem(THEME_LABELS["dark"], "dark")
+
+        current_theme = normalize_theme(settings.get("theme", DEFAULT_SETTINGS["theme"]))
+        theme_index = self.theme_combo.findData(current_theme)
+
+        if theme_index >= 0:
+            self.theme_combo.setCurrentIndex(theme_index)
 
         self.sound_checkbox = QCheckBox("Звук уведомлений")
         self.sound_checkbox.setChecked(settings.get("sound_enabled", True))
@@ -420,6 +661,10 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout()
+        layout.addWidget(QLabel("Внешний вид"))
+        layout.addWidget(QLabel("Тема"))
+        layout.addWidget(self.theme_combo)
+        layout.addSpacing(8)
         layout.addWidget(QLabel("Уведомления"))
         layout.addWidget(self.sound_checkbox)
         layout.addWidget(self.tray_notifications_checkbox)
@@ -440,7 +685,8 @@ class SettingsDialog(QDialog):
             "tray_notifications_enabled": self.tray_notifications_checkbox.isChecked(),
             "minimize_to_tray": self.minimize_to_tray_checkbox.isChecked(),
             "hide_notification_preview": self.hide_notification_preview_checkbox.isChecked(),
-            "remember_login": self.remember_login_checkbox.isChecked()
+            "remember_login": self.remember_login_checkbox.isChecked(),
+            "theme": normalize_theme(self.theme_combo.currentData())
         }
 
 
@@ -594,6 +840,7 @@ class MainWindow(QWidget):
         self.total_unread = 0
 
         self.settings = load_settings()
+        apply_app_theme(self.settings)
 
         self.signals = NetworkSignals()
         self.signals.new_message.connect(self.handle_new_message)
@@ -904,6 +1151,7 @@ class MainWindow(QWidget):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.settings.update(dialog.get_settings())
             save_settings(self.settings)
+            apply_app_theme(self.settings)
 
             if not self.settings.get("remember_login", False):
                 clear_auth_token()

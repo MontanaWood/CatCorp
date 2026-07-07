@@ -22,7 +22,7 @@ from client_network import (
     load_server_config_dict,
     save_server_config
 )
-from client_gui.main_window import MainWindow, load_settings, save_settings
+from client_gui.main_window import MainWindow, load_settings, save_settings, apply_app_theme
 
 
 class AuthWorker(QThread):
@@ -135,6 +135,7 @@ class LoginWindow(QWidget):
 
         self.setWindowTitle("CatCorp — Вход")
         self.setFixedSize(380, 340)
+        apply_app_theme(load_settings())
 
         self._build_ui()
         self.apply_mode()
