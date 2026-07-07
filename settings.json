@@ -1,5 +1,5 @@
 {
-    "sound_enabled": false,
+    "sound_enabled": true,
     "tray_notifications_enabled": true,
     "minimize_to_tray": false,
     "hide_notification_preview": false,

@@ -2,10 +2,12 @@
 # Простое главное окно CatCorp без кастомного дизайна, но с новыми функциями
 
 from html import escape
+import base64
 import json
 import os
 import sys
 import winsound
+from pathlib import Path
 from datetime import datetime, timedelta
 
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer, QPoint
@@ -25,6 +27,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QMenu,
     QInputDialog,
+    QFileDialog,
     QListView,
     QSystemTrayIcon,
     QApplication,
@@ -52,6 +55,72 @@ STATUS_LABELS = {
     "do_not_disturb": "не беспокоить",
     "away": "отошёл"
 }
+
+
+MAX_FILE_SIZE = 25 * 1024 * 1024
+
+
+def format_file_size(size_bytes) -> str:
+    """
+    Форматирует размер файла для карточки.
+    """
+    try:
+        size = int(size_bytes)
+    except (TypeError, ValueError):
+        size = 0
+
+    units = ["Б", "КБ", "МБ", "ГБ"]
+    value = float(size)
+
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            if unit == "Б":
+                return f"{int(value)} {unit}"
+
+            return f"{value:.1f} {unit}"
+
+        value /= 1024
+
+    return f"{size} Б"
+
+
+def sanitize_download_filename(filename: str) -> str:
+    """
+    Очищает имя файла для сохранения в папку Загрузки.
+    """
+    filename = os.path.basename(str(filename or "file")).strip()
+
+    for char in '<>:"|?*':
+        filename = filename.replace(char, "_")
+
+    filename = "".join(char for char in filename if ord(char) >= 32).strip(" .")
+
+    if not filename:
+        filename = "file"
+
+    return filename[:255]
+
+
+def unique_download_path(directory: Path, filename: str) -> Path:
+    """
+    Возвращает путь без перезаписи существующих файлов.
+    """
+    filename = sanitize_download_filename(filename)
+    path = directory / filename
+
+    if not path.exists():
+        return path
+
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
+
+    for index in range(1, 1000):
+        candidate = directory / f"{stem} ({index}){suffix}"
+
+        if not candidate.exists():
+            return candidate
+
+    return directory / f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{suffix}"
 
 
 def settings_path() -> str:
@@ -520,6 +589,7 @@ class MainWindow(QWidget):
         self.users = []
         self.recent_chats = []
         self.current_messages = []
+        self.selected_file_paths = []
         self.total_unread = 0
 
         self.settings = load_settings()
@@ -583,6 +653,7 @@ class MainWindow(QWidget):
             self.typing_label.setText("")
             self.message_input.clear()
             self.messages_list.clear()
+            self.clear_selected_files()
 
     def close_current_chat(self):
         """
@@ -678,6 +749,7 @@ class MainWindow(QWidget):
         self.messages_list.setUniformItemSizes(False)
         self.messages_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.messages_list.customContextMenuRequested.connect(self.open_message_context_menu)
+        self.messages_list.itemDoubleClicked.connect(self.handle_message_double_clicked)
 
         self.reply_panel = QWidget()
         reply_layout = QHBoxLayout()
@@ -692,10 +764,18 @@ class MainWindow(QWidget):
         self.reply_panel.setLayout(reply_layout)
         self.reply_panel.hide()
 
+        self.attachment_label = QLabel("")
+        self.attachment_label.setWordWrap(True)
+        self.attachment_label.hide()
+
         self.message_input = QLineEdit()
         self.message_input.setPlaceholderText("Введите сообщение...")
         self.message_input.textChanged.connect(self.handle_text_changed)
         self.message_input.returnPressed.connect(self.send_message)
+
+        self.attach_button = QPushButton("+")
+        self.attach_button.setToolTip("Прикрепить файлы")
+        self.attach_button.clicked.connect(self.select_files)
 
         self.send_button = QPushButton("Отправить")
         self.send_button.clicked.connect(self.send_message)
@@ -703,6 +783,7 @@ class MainWindow(QWidget):
         self.input_panel = QWidget()
         input_layout = QHBoxLayout()
         input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.addWidget(self.attach_button)
         input_layout.addWidget(self.message_input)
         input_layout.addWidget(self.send_button)
         self.input_panel.setLayout(input_layout)
@@ -713,6 +794,7 @@ class MainWindow(QWidget):
         right_layout.addWidget(self.empty_chat_label, 1)
         right_layout.addWidget(self.messages_list)
         right_layout.addWidget(self.reply_panel)
+        right_layout.addWidget(self.attachment_label)
         right_layout.addWidget(self.input_panel)
 
         main_layout = QHBoxLayout()
@@ -1503,6 +1585,7 @@ class MainWindow(QWidget):
         edited_at = message.get("edited_at")
         reply_content = message.get("reply_content")
         reply_sender = message.get("reply_sender_username")
+        message_type = message.get("message_type", "text")
 
         parts = []
 
@@ -1515,7 +1598,14 @@ class MainWindow(QWidget):
             title += " (изменено)"
 
         parts.append(title)
-        parts.append(content)
+
+        if message_type == "file":
+            file_name = message.get("file_original_name") or content or "Файл"
+            file_size = format_file_size(message.get("file_size_bytes"))
+            parts.append(f"📎 {file_name}")
+            parts.append(f"{file_size} — двойной клик, чтобы скачать")
+        else:
+            parts.append(content)
 
         return "\n".join(parts)
 
@@ -1542,13 +1632,23 @@ class MainWindow(QWidget):
 
         menu = QMenu(self)
 
+        if message.get("message_type") == "file":
+            download_action = QAction("Скачать файл", self)
+            download_action.triggered.connect(lambda: self.download_file_message(message))
+            menu.addAction(download_action)
+            menu.addSeparator()
+
         reply_action = QAction("Ответить", self)
         reply_action.triggered.connect(lambda: self.start_reply(message))
         menu.addAction(reply_action)
 
         current_user_id = self.current_user.get("id") if self.current_user else None
 
-        if message.get("sender_id") == current_user_id and self.can_edit_message(message):
+        if (
+            message.get("message_type") != "file"
+            and message.get("sender_id") == current_user_id
+            and self.can_edit_message(message)
+        ):
             edit_action = QAction("Редактировать", self)
             edit_action.triggered.connect(lambda: self.edit_own_message(message))
             menu.addAction(edit_action)
@@ -1558,7 +1658,11 @@ class MainWindow(QWidget):
     def start_reply(self, message: dict):
         self.reply_message = message
         sender = message.get("sender_username", "unknown")
-        content = short_text(message.get("content", ""), 90)
+        if message.get("message_type") == "file":
+            content = "📎 " + str(message.get("file_original_name") or message.get("content", "Файл"))
+        else:
+            content = short_text(message.get("content", ""), 90)
+
         self.reply_label.setText(f"Ответ на {sender}: {content}")
         self.reply_panel.show()
         self.message_input.setFocus()
@@ -1801,54 +1905,219 @@ class MainWindow(QWidget):
         currently_muted = self.is_user_muted(user_id)
         self.set_user_muted(user_id, not currently_muted)
 
+    def select_files(self):
+        """
+        Выбирает один или несколько файлов для отправки.
+        """
+        if not self.selected_user:
+            QMessageBox.information(self, "Нет чата", "Сначала выберите личный чат или группу")
+            return
+
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Выбор файлов",
+            str(Path.home() / "Downloads"),
+            "Все файлы (*.*)"
+        )
+
+        if not file_paths:
+            return
+
+        accepted = []
+        skipped = []
+
+        for file_path in file_paths:
+            path = Path(file_path)
+
+            if not path.exists() or not path.is_file():
+                skipped.append(path.name)
+                continue
+
+            size = path.stat().st_size
+
+            if size <= 0 or size > MAX_FILE_SIZE:
+                skipped.append(path.name)
+                continue
+
+            if str(path) not in self.selected_file_paths:
+                accepted.append(str(path))
+
+        self.selected_file_paths.extend(accepted)
+        self.update_attachment_label()
+
+        if skipped:
+            QMessageBox.warning(
+                self,
+                "Некоторые файлы не добавлены",
+                "Файл должен быть не пустым и не больше 25 МБ:\\n" + "\\n".join(skipped[:10])
+            )
+
+    def update_attachment_label(self):
+        """
+        Показывает список выбранных файлов перед отправкой.
+        """
+        if not hasattr(self, "attachment_label"):
+            return
+
+        if not self.selected_file_paths:
+            self.attachment_label.hide()
+            self.attachment_label.setText("")
+            return
+
+        names = [Path(path).name for path in self.selected_file_paths]
+        preview = ", ".join(names[:3])
+
+        if len(names) > 3:
+            preview += f" и ещё {len(names) - 3}"
+
+        self.attachment_label.setText(f"Прикреплено: {preview}")
+        self.attachment_label.show()
+
+    def clear_selected_files(self):
+        """
+        Очищает список выбранных файлов.
+        """
+        self.selected_file_paths = []
+
+        if hasattr(self, "attachment_label"):
+            self.attachment_label.hide()
+            self.attachment_label.setText("")
+
+    def downloads_dir(self) -> Path:
+        """
+        Возвращает папку Downloads/CatCorp.
+        """
+        directory = Path.home() / "Downloads" / "CatCorp"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory
+
+    def handle_message_double_clicked(self, item: QListWidgetItem):
+        """
+        Двойной клик по file-сообщению скачивает файл.
+        """
+        if item is None:
+            return
+
+        message = item.data(Qt.ItemDataRole.UserRole)
+
+        if not message or message.get("message_type") != "file":
+            return
+
+        self.download_file_message(message)
+
+    def download_file_message(self, message: dict):
+        """
+        Скачивает файл в Downloads/CatCorp.
+        """
+        file_id = message.get("file_id")
+
+        if not file_id:
+            QMessageBox.warning(self, "Файл", "ID файла отсутствует")
+            return
+
+        response = self.network.download_file(file_id)
+
+        if response.get("status") != "ok":
+            QMessageBox.warning(self, "Ошибка скачивания", response.get("message", "Не удалось скачать файл"))
+            return
+
+        data = response.get("data", {}) or {}
+        original_name = data.get("original_name") or message.get("file_original_name") or message.get("content") or "file"
+        data_b64 = data.get("data_b64", "")
+
+        try:
+            file_bytes = base64.b64decode(str(data_b64).encode("ascii"), validate=True)
+        except (ValueError, UnicodeEncodeError):
+            QMessageBox.warning(self, "Ошибка скачивания", "Файл повреждён при передаче")
+            return
+
+        save_path = unique_download_path(self.downloads_dir(), original_name)
+
+        try:
+            save_path.write_bytes(file_bytes)
+        except OSError:
+            QMessageBox.warning(self, "Ошибка скачивания", "Не удалось сохранить файл")
+            return
+
+        QMessageBox.information(self, "Файл скачан", f"Файл сохранён:\\n{save_path}")
+
     def send_message(self):
         if not self.selected_user:
             QMessageBox.information(self, "Нет получателя", "Сначала выберите чат или нажмите '+ Новый чат'")
             return
 
         content = self.message_input.text().strip()
+        selected_files = list(self.selected_file_paths)
 
-        if not content:
+        if not content and not selected_files:
             return
 
         self.send_button.setEnabled(False)
         self.message_input.setEnabled(False)
+        self.attach_button.setEnabled(False)
 
-        if self.selected_chat_type == "room":
-            room_id = self.selected_user.get("room_id") or self.selected_user.get("id")
-            reply_to_message_id = None
+        try:
+            if content:
+                if self.selected_chat_type == "room":
+                    room_id = self.selected_user.get("room_id") or self.selected_user.get("id")
+                    reply_to_message_id = None
 
-            if self.reply_message:
-                reply_to_message_id = self.reply_message.get("id")
+                    if self.reply_message:
+                        reply_to_message_id = self.reply_message.get("id")
 
-            response = self.network.send_room_message(room_id, content, reply_to_message_id)
-        else:
-            receiver_id = self.selected_user.get("id")
-            reply_to_message_id = None
+                    response = self.network.send_room_message(room_id, content, reply_to_message_id)
+                else:
+                    receiver_id = self.selected_user.get("id")
+                    reply_to_message_id = None
 
-            if self.reply_message:
-                reply_to_message_id = self.reply_message.get("id")
+                    if self.reply_message:
+                        reply_to_message_id = self.reply_message.get("id")
 
-            response = self.network.send_message(receiver_id, content, reply_to_message_id)
+                    response = self.network.send_message(receiver_id, content, reply_to_message_id)
 
-        self.send_button.setEnabled(True)
-        self.message_input.setEnabled(True)
-        self.message_input.setFocus()
+                if response.get("status") != "ok":
+                    QMessageBox.warning(self, "Ошибка отправки", response.get("message", "Не удалось отправить сообщение"))
+                    return
 
-        if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка отправки", response.get("message", "Не удалось отправить сообщение"))
-            return
+                data = response.get("data", {})
+                message = data.get("message")
 
-        data = response.get("data", {})
-        message = data.get("message")
+                if message:
+                    self.append_message(message)
 
-        if message:
-            self.append_message(message)
+            for file_path in selected_files:
+                if self.selected_chat_type == "room":
+                    target_id = self.selected_user.get("room_id") or self.selected_user.get("id")
+                    response = self.network.upload_file(file_path, "room", target_id)
+                else:
+                    target_id = self.selected_user.get("id")
+                    response = self.network.upload_file(file_path, "user", target_id)
 
-        self.message_input.clear()
-        self.cancel_reply()
-        self.stop_typing()
-        self.load_recent_chats()
+                if response.get("status") != "ok":
+                    QMessageBox.warning(
+                        self,
+                        "Ошибка отправки файла",
+                        f"{Path(file_path).name}: {response.get('message', 'Не удалось отправить файл')}"
+                    )
+                    continue
+
+                data = response.get("data", {})
+                message = data.get("message")
+
+                if message:
+                    self.append_message(message)
+
+            self.message_input.clear()
+            self.clear_selected_files()
+            self.cancel_reply()
+            self.stop_typing()
+            self.load_recent_chats()
+
+        finally:
+            self.send_button.setEnabled(True)
+            self.message_input.setEnabled(True)
+            self.attach_button.setEnabled(True)
+            self.message_input.setFocus()
 
     def handle_new_message(self, message: dict):
         if not message:
@@ -1863,8 +2132,9 @@ class MainWindow(QWidget):
         else:
             if not muted:
                 sender_name = message.get("sender_username", "Новое сообщение")
+                preview = "📎 " + str(message.get("file_original_name") or message.get("content", "Файл")) if message.get("message_type") == "file" else short_text(message.get("content", ""), 120)
                 self.play_new_message_sound()
-                self.show_tray_notification(sender_name, short_text(message.get("content", ""), 120))
+                self.show_tray_notification(sender_name, preview)
 
             self.load_recent_chats()
 
@@ -1927,8 +2197,9 @@ class MainWindow(QWidget):
 
         if not self.is_room_muted(room_id):
             sender_name = message.get("sender_username", "Группа")
+            preview = "📎 " + str(message.get("file_original_name") or message.get("content", "Файл")) if message.get("message_type") == "file" else short_text(message.get("content", ""), 120)
             self.play_new_message_sound()
-            self.show_tray_notification(f"Группа: {sender_name}", short_text(message.get("content", ""), 120))
+            self.show_tray_notification(f"Группа: {sender_name}", preview)
 
         self.load_recent_chats()
 

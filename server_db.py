@@ -465,6 +465,7 @@ def create_auth_token(user_id: int) -> str | None:
     if not ensure_user_tokens_table():
         return None
 
+    ensure_file_tables()
     connection = get_connection()
 
     if connection is None:
@@ -929,11 +930,194 @@ def change_user_password(user_id: int, old_password: str, new_password: str) -> 
             connection.close()
 
 
-def save_message(sender_id: int, receiver_id: int, content: str, reply_to_message_id: int | None = None):
+
+def ensure_file_tables() -> bool:
+    """
+    Создаёт таблицу файлов и добавляет поля file/message_type в сообщения.
+    """
+    connection = get_connection()
+
+    if connection is None:
+        return False
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS uploaded_files (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                original_name VARCHAR(255) NOT NULL,
+                stored_name VARCHAR(500) NOT NULL UNIQUE,
+                size_bytes BIGINT NOT NULL,
+                sha256_hash CHAR(64) NOT NULL,
+                sender_id INT NOT NULL,
+                receiver_id INT NULL,
+                room_id INT NULL,
+                created_at DATETIME DEFAULT NOW()
+            )
+        """)
+
+        for table_name in ("messages", "room_messages"):
+            try:
+                cursor.execute(f"""
+                    ALTER TABLE {table_name}
+                    ADD COLUMN message_type VARCHAR(20) NOT NULL DEFAULT 'text'
+                """)
+            except Error:
+                pass
+
+            try:
+                cursor.execute(f"""
+                    ALTER TABLE {table_name}
+                    ADD COLUMN file_id INT NULL
+                """)
+            except Error:
+                pass
+
+        connection.commit()
+        return True
+
+    except Error as error:
+        print("Ошибка при подготовке таблиц файлов:")
+        print(error)
+        return False
+
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def user_exists(user_id: int) -> bool:
+    """
+    Проверяет существование пользователя.
+    """
+    connection = get_connection()
+
+    if connection is None:
+        return False
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute("SELECT id FROM users WHERE id = %s LIMIT 1", (user_id,))
+        return cursor.fetchone() is not None
+
+    except Error as error:
+        print("Ошибка при проверке пользователя:")
+        print(error)
+        return False
+
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def create_uploaded_file_record(
+    original_name: str,
+    stored_name: str,
+    size_bytes: int,
+    sha256_hash: str,
+    sender_id: int,
+    receiver_id: int | None = None,
+    room_id: int | None = None
+):
+    """
+    Создаёт запись о загруженном файле и возвращает file_id.
+    """
+    if not ensure_file_tables():
+        return None
+
+    connection = get_connection()
+
+    if connection is None:
+        return None
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO uploaded_files
+                (original_name, stored_name, size_bytes, sha256_hash, sender_id, receiver_id, room_id)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (original_name, stored_name, size_bytes, sha256_hash, sender_id, receiver_id, room_id)
+        )
+
+        file_id = cursor.lastrowid
+        connection.commit()
+        return file_id
+
+    except Error as error:
+        print("Ошибка при создании записи файла:")
+        print(error)
+        return None
+
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def get_uploaded_file_for_user(file_id: int, user_id: int):
+    """
+    Возвращает файл, если пользователь имеет право его скачать.
+    """
+    ensure_file_tables()
+    connection = get_connection()
+
+    if connection is None:
+        return None
+
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT
+                f.id,
+                f.original_name,
+                f.stored_name,
+                f.size_bytes,
+                f.sha256_hash,
+                f.sender_id,
+                f.receiver_id,
+                f.room_id,
+                f.created_at
+            FROM uploaded_files f
+            LEFT JOIN room_members rm
+                ON rm.room_id = f.room_id
+               AND rm.user_id = %s
+            WHERE f.id = %s
+              AND (
+                    f.sender_id = %s
+                 OR f.receiver_id = %s
+                 OR rm.user_id IS NOT NULL
+              )
+            LIMIT 1
+            """,
+            (user_id, file_id, user_id, user_id)
+        )
+
+        return cursor.fetchone()
+
+    except Error as error:
+        print("Ошибка при получении файла:")
+        print(error)
+        return None
+
+    finally:
+        if connection.is_connected():
+            cursor.close()
+            connection.close()
+
+
+def save_message(sender_id: int, receiver_id: int, content: str, reply_to_message_id: int | None = None, message_type: str = "text", file_id: int | None = None):
     """
     Сохраняет личное сообщение в базу данных.
     Возвращает ID нового сообщения или None при ошибке.
     """
+    ensure_file_tables()
     connection = get_connection()
 
     if connection is None:
@@ -943,11 +1127,11 @@ def save_message(sender_id: int, receiver_id: int, content: str, reply_to_messag
         cursor = connection.cursor()
 
         query = """
-            INSERT INTO messages (sender_id, receiver_id, content, read_at, reply_to_message_id)
-            VALUES (%s, %s, %s, NULL, %s)
+            INSERT INTO messages (sender_id, receiver_id, content, read_at, reply_to_message_id, message_type, file_id)
+            VALUES (%s, %s, %s, NULL, %s, %s, %s)
         """
 
-        cursor.execute(query, (sender_id, receiver_id, content, reply_to_message_id))
+        cursor.execute(query, (sender_id, receiver_id, content, reply_to_message_id, message_type, file_id))
         message_id = cursor.lastrowid
 
         # Если получатель раньше скрывал этот чат, новое сообщение возвращает чат в список.
@@ -987,6 +1171,7 @@ def get_message_history(user1_id: int, user2_id: int):
     """
     Возвращает историю переписки между двумя пользователями.
     """
+    ensure_file_tables()
     connection = get_connection()
 
     if connection is None:
@@ -1003,6 +1188,10 @@ def get_message_history(user1_id: int, user2_id: int):
                 m.receiver_id,
                 COALESCE(receiver.display_name, receiver.username) AS receiver_username,
                 m.content,
+                m.message_type,
+                m.file_id,
+                f.original_name AS file_original_name,
+                f.size_bytes AS file_size_bytes,
                 m.sent_at,
                 m.read_at,
                 m.edited_at,
@@ -1014,6 +1203,7 @@ def get_message_history(user1_id: int, user2_id: int):
             JOIN users receiver ON m.receiver_id = receiver.id
             LEFT JOIN messages reply ON m.reply_to_message_id = reply.id
             LEFT JOIN users reply_sender ON reply.sender_id = reply_sender.id
+            LEFT JOIN uploaded_files f ON f.id = m.file_id
             WHERE 
                 (m.sender_id = %s AND m.receiver_id = %s)
                 OR
@@ -1041,6 +1231,7 @@ def search_message_history(user1_id: int, user2_id: int, search_text: str):
     """
     Ищет сообщения в истории переписки двух пользователей.
     """
+    ensure_file_tables()
     connection = get_connection()
 
     if connection is None:
@@ -1057,6 +1248,10 @@ def search_message_history(user1_id: int, user2_id: int, search_text: str):
                 m.receiver_id,
                 COALESCE(receiver.display_name, receiver.username) AS receiver_username,
                 m.content,
+                m.message_type,
+                m.file_id,
+                f.original_name AS file_original_name,
+                f.size_bytes AS file_size_bytes,
                 m.sent_at,
                 m.read_at,
                 m.edited_at,
@@ -1068,6 +1263,7 @@ def search_message_history(user1_id: int, user2_id: int, search_text: str):
             JOIN users receiver ON m.receiver_id = receiver.id
             LEFT JOIN messages reply ON m.reply_to_message_id = reply.id
             LEFT JOIN users reply_sender ON reply.sender_id = reply_sender.id
+            LEFT JOIN uploaded_files f ON f.id = m.file_id
             WHERE 
                 (
                     (m.sender_id = %s AND m.receiver_id = %s)
@@ -1102,6 +1298,7 @@ def get_recent_chats(user_id: int):
     Закреплённые чаты отображаются сверху.
     """
     ensure_user_profile_columns()
+    ensure_file_tables()
     connection = get_connection()
 
     if connection is None:
@@ -1120,7 +1317,10 @@ def get_recent_chats(user_id: int):
                 u.department,
                 u.position,
                 u.last_login_at,
-                last_msg.content AS last_message,
+                CASE
+                    WHEN last_msg.message_type = 'file' THEN CONCAT('📎 ', last_msg.content)
+                    ELSE last_msg.content
+                END AS last_message,
                 last_msg.sent_at AS last_message_time,
 
                 (
@@ -1221,6 +1421,7 @@ def get_total_unread_count(user_id: int) -> int:
     """
     Возвращает общее количество непрочитанных входящих сообщений.
     """
+    ensure_file_tables()
     connection = get_connection()
 
     if connection is None:
@@ -1386,7 +1587,7 @@ def edit_message(message_id: int, sender_id: int, new_content: str):
 
         cursor.execute(
             """
-            SELECT id, sender_id, receiver_id, sent_at, (sent_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR)) AS can_edit
+            SELECT id, sender_id, receiver_id, message_type, sent_at, (sent_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR)) AS can_edit
             FROM messages
             WHERE id = %s
             LIMIT 1
@@ -1400,6 +1601,9 @@ def edit_message(message_id: int, sender_id: int, new_content: str):
             return None
 
         if int(message["sender_id"]) != int(sender_id):
+            return None
+
+        if message.get("message_type") == "file":
             return None
 
         if not bool(message.get("can_edit")):
@@ -1425,6 +1629,10 @@ def edit_message(message_id: int, sender_id: int, new_content: str):
                 m.receiver_id,
                 COALESCE(receiver.display_name, receiver.username) AS receiver_username,
                 m.content,
+                m.message_type,
+                m.file_id,
+                f.original_name AS file_original_name,
+                f.size_bytes AS file_size_bytes,
                 m.sent_at,
                 m.read_at,
                 m.edited_at,
@@ -1436,6 +1644,7 @@ def edit_message(message_id: int, sender_id: int, new_content: str):
             JOIN users receiver ON m.receiver_id = receiver.id
             LEFT JOIN messages reply ON m.reply_to_message_id = reply.id
             LEFT JOIN users reply_sender ON reply.sender_id = reply_sender.id
+            LEFT JOIN uploaded_files f ON f.id = m.file_id
             WHERE m.id = %s
             LIMIT 1
             """,
@@ -1495,6 +1704,8 @@ def ensure_group_tables() -> bool:
                 room_id INT NOT NULL,
                 sender_id INT NOT NULL,
                 content TEXT NOT NULL,
+                message_type VARCHAR(20) NOT NULL DEFAULT 'text',
+                file_id INT NULL,
                 sent_at DATETIME DEFAULT NOW(),
                 edited_at DATETIME NULL,
                 reply_to_message_id INT NULL,
@@ -1677,7 +1888,10 @@ def get_room_for_user(user_id: int, room_id: int):
                 r.name,
                 r.created_by,
                 r.created_at,
-                last_msg.content AS last_message,
+                CASE
+                    WHEN last_msg.message_type = 'file' THEN CONCAT('📎 ', last_msg.content)
+                    ELSE last_msg.content
+                END AS last_message,
                 last_msg.sent_at AS last_message_time
             FROM rooms r
             JOIN room_members rm ON rm.room_id = r.id AND rm.user_id = %s
@@ -1709,6 +1923,8 @@ def get_user_rooms(user_id: int):
     """
     Возвращает группы пользователя для списка недавних чатов.
     """
+    ensure_file_tables()
+
     if not ensure_group_tables():
         return []
 
@@ -1726,7 +1942,10 @@ def get_user_rooms(user_id: int):
                 r.name,
                 r.created_by,
                 r.created_at,
-                last_msg.content AS last_message,
+                CASE
+                    WHEN last_msg.message_type = 'file' THEN CONCAT('📎 ', last_msg.content)
+                    ELSE last_msg.content
+                END AS last_message,
                 last_msg.sent_at AS last_message_time
             FROM rooms r
             JOIN room_members rm ON rm.room_id = r.id AND rm.user_id = %s
@@ -1794,6 +2013,23 @@ def ensure_room_read_state_table() -> bool:
             """)
         except Error:
             pass
+
+        try:
+            cursor.execute("""
+                ALTER TABLE room_messages
+                ADD COLUMN message_type VARCHAR(20) NOT NULL DEFAULT 'text'
+            """)
+        except Error:
+            pass
+
+        try:
+            cursor.execute("""
+                ALTER TABLE room_messages
+                ADD COLUMN file_id INT NULL
+            """)
+        except Error:
+            pass
+
 
         connection.commit()
         return True
@@ -1910,7 +2146,7 @@ def get_room_unread_count(user_id: int, room_id: int) -> int:
             connection.close()
 
 
-def save_room_message(room_id: int, sender_id: int, content: str, reply_to_message_id: int | None = None):
+def save_room_message(room_id: int, sender_id: int, content: str, reply_to_message_id: int | None = None, message_type: str = "text", file_id: int | None = None):
     """
     Сохраняет сообщение группы.
     Возвращает ID нового сообщения или None при ошибке.
@@ -1927,10 +2163,10 @@ def save_room_message(room_id: int, sender_id: int, content: str, reply_to_messa
 
         cursor.execute(
             """
-            INSERT INTO room_messages (room_id, sender_id, content, reply_to_message_id)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO room_messages (room_id, sender_id, content, reply_to_message_id, message_type, file_id)
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
-            (room_id, sender_id, content, reply_to_message_id)
+            (room_id, sender_id, content, reply_to_message_id, message_type, file_id)
         )
 
         message_id = cursor.lastrowid
@@ -1986,6 +2222,10 @@ def get_room_history(user_id: int, room_id: int):
                 m.sender_id,
                 COALESCE(u.display_name, u.username) AS sender_username,
                 m.content,
+                m.message_type,
+                m.file_id,
+                f.original_name AS file_original_name,
+                f.size_bytes AS file_size_bytes,
                 m.sent_at,
                 m.edited_at,
                 m.reply_to_message_id,
@@ -1995,6 +2235,7 @@ def get_room_history(user_id: int, room_id: int):
             JOIN users u ON u.id = m.sender_id
             LEFT JOIN room_messages reply ON m.reply_to_message_id = reply.id
             LEFT JOIN users reply_sender ON reply.sender_id = reply_sender.id
+            LEFT JOIN uploaded_files f ON f.id = m.file_id
             WHERE m.room_id = %s
             ORDER BY m.sent_at ASC, m.id ASC
             """,
@@ -2038,6 +2279,10 @@ def get_room_message_by_id(user_id: int, message_id: int):
                 m.sender_id,
                 COALESCE(u.display_name, u.username) AS sender_username,
                 m.content,
+                m.message_type,
+                m.file_id,
+                f.original_name AS file_original_name,
+                f.size_bytes AS file_size_bytes,
                 m.sent_at,
                 m.edited_at,
                 m.reply_to_message_id,
@@ -2048,6 +2293,7 @@ def get_room_message_by_id(user_id: int, message_id: int):
             JOIN room_members rm ON rm.room_id = m.room_id AND rm.user_id = %s
             LEFT JOIN room_messages reply ON m.reply_to_message_id = reply.id
             LEFT JOIN users reply_sender ON reply.sender_id = reply_sender.id
+            LEFT JOIN uploaded_files f ON f.id = m.file_id
             WHERE m.id = %s
             LIMIT 1
             """,
@@ -2089,7 +2335,7 @@ def edit_room_message(message_id: int, sender_id: int, new_content: str):
 
         cursor.execute(
             """
-            SELECT id, room_id, sender_id, sent_at, (sent_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR)) AS can_edit
+            SELECT id, room_id, sender_id, message_type, sent_at, (sent_at >= DATE_SUB(NOW(), INTERVAL 48 HOUR)) AS can_edit
             FROM room_messages
             WHERE id = %s
             LIMIT 1
@@ -2103,6 +2349,9 @@ def edit_room_message(message_id: int, sender_id: int, new_content: str):
             return None
 
         if int(message["sender_id"]) != int(sender_id):
+            return None
+
+        if message.get("message_type") == "file":
             return None
 
         if not is_room_member(int(message["room_id"]), int(sender_id)):

@@ -1,7 +1,13 @@
 # Серверная часть CatCorp: принимает TCP-подключения клиентов, работает с БД и пересылает сообщения
 
+import base64
+import binascii
+import hashlib
+import os
 import socket
 import threading
+import uuid
+from pathlib import Path
 from datetime import datetime
 
 from common.protocol import send_json, recv_json, make_ok, make_error
@@ -43,13 +49,19 @@ from server_db import (
     edit_room_message,
     get_login_block_status,
     register_failed_login_attempt,
-    reset_login_attempts
+    reset_login_attempts,
+    create_uploaded_file_record,
+    get_uploaded_file_for_user,
+    user_exists,
+    is_room_member
 )
 
 
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 5000
 MAX_MESSAGE_LENGTH = 4096
+MAX_FILE_SIZE = 25 * 1024 * 1024
+UPLOADS_DIR = Path(__file__).resolve().parent / "uploads"
 
 
 # Словарь онлайн-пользователей:
@@ -90,6 +102,87 @@ def prepare_for_json(obj):
         }
 
     return convert_datetime(obj)
+
+
+def safe_original_filename(name: str) -> str:
+    """
+    Очищает имя файла от путей и опасных символов.
+    """
+    name = os.path.basename(str(name or "")).strip()
+    name = name.replace("\\", "_").replace("/", "_")
+
+    for char in '<>:"|?*':
+        name = name.replace(char, "_")
+
+    name = "".join(char for char in name if ord(char) >= 32).strip(" .")
+
+    if not name:
+        name = "file"
+
+    return name[:255]
+
+
+def build_stored_filename(original_name: str) -> str:
+    """
+    Создаёт уникальное имя хранения на сервере.
+    """
+    extension = Path(original_name).suffix.lower()
+
+    if len(extension) > 20:
+        extension = ""
+
+    today = datetime.now()
+    relative_dir = Path(str(today.year)) / f"{today.month:02d}" / f"{today.day:02d}"
+    stored_basename = f"{uuid.uuid4().hex}{extension}"
+
+    return str(relative_dir / stored_basename).replace("\\", "/")
+
+
+def save_uploaded_bytes(file_bytes: bytes, original_name: str) -> str | None:
+    """
+    Сохраняет файл в uploads/ под уникальным именем.
+    Возвращает относительное имя хранения.
+    """
+    stored_name = build_stored_filename(original_name)
+    target_path = UPLOADS_DIR / stored_name
+
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(file_bytes)
+        return stored_name
+
+    except OSError as error:
+        print("Ошибка при сохранении файла:")
+        print(error)
+        return None
+
+
+def get_upload_path(stored_name: str) -> Path | None:
+    """
+    Возвращает безопасный путь к файлу внутри uploads.
+    """
+    try:
+        base = UPLOADS_DIR.resolve()
+        path = (UPLOADS_DIR / stored_name).resolve()
+
+        if not str(path).startswith(str(base)):
+            return None
+
+        return path
+
+    except OSError:
+        return None
+
+
+def find_message_in_history(messages: list, message_id: int):
+    """
+    Находит сообщение по ID в уже загруженной истории.
+    """
+    for item in messages:
+        if int(item.get("id", -1)) == int(message_id):
+            return prepare_for_json(item)
+
+    return None
 
 
 def add_online_user(user_id, username, role, client_socket):
@@ -1011,6 +1104,283 @@ def handle_send_message(client_socket, current_user, request):
 
 
 
+
+def handle_upload_file(client_socket, current_user, request):
+    """
+    Загружает файл на сервер и создаёт file-сообщение в личном чате или группе.
+    MVP-версия: файл передаётся base64 внутри JSON, без прогресса и отмены.
+    """
+    chat_type = str(request.get("chat_type", "")).strip()
+    original_name = safe_original_filename(request.get("original_name", "file"))
+    size_bytes = request.get("size_bytes")
+    file_data_b64 = request.get("data_b64", "")
+
+    try:
+        size_bytes = int(size_bytes)
+    except (TypeError, ValueError):
+        send_json(client_socket, make_error("Некорректный размер файла"))
+        return
+
+    if size_bytes <= 0:
+        send_json(client_socket, make_error("Файл пустой"))
+        return
+
+    if size_bytes > MAX_FILE_SIZE:
+        send_json(client_socket, make_error("Файл слишком большой. Максимум 25 МБ"))
+        return
+
+    if not isinstance(file_data_b64, str) or not file_data_b64:
+        send_json(client_socket, make_error("Данные файла отсутствуют"))
+        return
+
+    try:
+        file_bytes = base64.b64decode(file_data_b64.encode("ascii"), validate=True)
+    except (ValueError, binascii.Error, UnicodeEncodeError, NameError):
+        send_json(client_socket, make_error("Файл повреждён при передаче"))
+        return
+
+    if len(file_bytes) != size_bytes:
+        send_json(client_socket, make_error("Размер файла не совпадает с заявленным"))
+        return
+
+    if len(file_bytes) > MAX_FILE_SIZE:
+        send_json(client_socket, make_error("Файл слишком большой. Максимум 25 МБ"))
+        return
+
+    sender_id = current_user["id"]
+    receiver_id = None
+    room_id = None
+
+    if chat_type == "user":
+        receiver_id = request.get("receiver_id")
+
+        try:
+            receiver_id = int(receiver_id)
+        except (TypeError, ValueError):
+            send_json(client_socket, make_error("Некорректный ID получателя"))
+            return
+
+        if receiver_id == sender_id:
+            send_json(client_socket, make_error("Нельзя отправить файл самому себе"))
+            return
+
+        if not user_exists(receiver_id):
+            send_json(client_socket, make_error("Получатель не найден"))
+            return
+
+    elif chat_type == "room":
+        room_id = request.get("room_id")
+
+        try:
+            room_id = int(room_id)
+        except (TypeError, ValueError):
+            send_json(client_socket, make_error("Некорректный ID группы"))
+            return
+
+        if not is_room_member(room_id, sender_id):
+            send_json(client_socket, make_error("Вы не состоите в этой группе"))
+            return
+
+    else:
+        send_json(client_socket, make_error("Некорректный тип чата"))
+        return
+
+    stored_name = save_uploaded_bytes(file_bytes, original_name)
+
+    if stored_name is None:
+        send_json(client_socket, make_error("Не удалось сохранить файл на сервере"))
+        return
+
+    sha256_hash = hashlib.sha256(file_bytes).hexdigest()
+    file_id = create_uploaded_file_record(
+        original_name=original_name,
+        stored_name=stored_name,
+        size_bytes=size_bytes,
+        sha256_hash=sha256_hash,
+        sender_id=sender_id,
+        receiver_id=receiver_id,
+        room_id=room_id
+    )
+
+    if not file_id:
+        path = get_upload_path(stored_name)
+
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        send_json(client_socket, make_error("Не удалось создать запись файла"))
+        return
+
+    if chat_type == "user":
+        message_id = save_message(
+            sender_id,
+            receiver_id,
+            original_name,
+            None,
+            message_type="file",
+            file_id=file_id
+        )
+
+        if not message_id:
+            send_json(client_socket, make_error("Не удалось создать сообщение с файлом"))
+            return
+
+        history = get_message_history(sender_id, receiver_id)
+        message_data = find_message_in_history(history, message_id)
+
+        if message_data is None:
+            message_data = {
+                "id": message_id,
+                "sender_id": sender_id,
+                "sender_username": current_user.get("display_name") or current_user["username"],
+                "receiver_id": receiver_id,
+                "content": original_name,
+                "message_type": "file",
+                "file_id": file_id,
+                "file_original_name": original_name,
+                "file_size_bytes": size_bytes,
+                "sent_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "edited_at": None,
+                "reply_to_message_id": None,
+                "reply_content": None,
+                "reply_sender_username": None
+            }
+
+        send_json(
+            client_socket,
+            make_ok(
+                message="Файл отправлен",
+                data={
+                    "event": "file_sent",
+                    "message": message_data
+                }
+            )
+        )
+
+        receiver_socket = get_online_socket(receiver_id)
+
+        if receiver_socket is not None:
+            send_json(
+                receiver_socket,
+                make_ok(
+                    message="Новый файл",
+                    data={
+                        "event": "new_message",
+                        "message": message_data
+                    }
+                )
+            )
+
+        send_recent_chats_update(sender_id)
+        send_recent_chats_update(receiver_id)
+        return
+
+    message_id = save_room_message(
+        room_id,
+        sender_id,
+        original_name,
+        None,
+        message_type="file",
+        file_id=file_id
+    )
+
+    if not message_id:
+        send_json(client_socket, make_error("Не удалось создать сообщение с файлом"))
+        return
+
+    message_data = get_room_message_by_id(sender_id, message_id)
+    message_data = prepare_for_json(message_data)
+
+    send_json(
+        client_socket,
+        make_ok(
+            message="Файл отправлен в группу",
+            data={
+                "event": "room_file_sent",
+                "message": message_data
+            }
+        )
+    )
+
+    for member_id in get_room_member_ids(room_id):
+        if member_id == sender_id:
+            continue
+
+        member_socket = get_online_socket(member_id)
+
+        if member_socket is not None:
+            send_json(
+                member_socket,
+                make_ok(
+                    message="Новый файл в группе",
+                    data={
+                        "event": "new_room_message",
+                        "message": message_data
+                    }
+                )
+            )
+
+    send_room_update_to_members(room_id)
+
+
+def handle_download_file(client_socket, current_user, request):
+    """
+    Отдаёт файл пользователю, если у него есть доступ к чату.
+    """
+    file_id = request.get("file_id")
+
+    try:
+        file_id = int(file_id)
+    except (TypeError, ValueError):
+        send_json(client_socket, make_error("Некорректный ID файла"))
+        return
+
+    file_info = get_uploaded_file_for_user(file_id, current_user["id"])
+
+    if file_info is None:
+        send_json(client_socket, make_error("Файл не найден или нет доступа"))
+        return
+
+    path = get_upload_path(file_info.get("stored_name", ""))
+
+    if path is None or not path.exists() or not path.is_file():
+        send_json(client_socket, make_error("Файл отсутствует на сервере"))
+        return
+
+    try:
+        file_bytes = path.read_bytes()
+    except OSError:
+        send_json(client_socket, make_error("Не удалось прочитать файл на сервере"))
+        return
+
+    if len(file_bytes) > MAX_FILE_SIZE:
+        send_json(client_socket, make_error("Файл на сервере превышает лимит 25 МБ"))
+        return
+
+    file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+    if file_hash != file_info.get("sha256_hash"):
+        send_json(client_socket, make_error("Файл повреждён на сервере"))
+        return
+
+    send_json(
+        client_socket,
+        make_ok(
+            message="Файл скачан",
+            data={
+                "file_id": file_info["id"],
+                "original_name": file_info["original_name"],
+                "size_bytes": len(file_bytes),
+                "data_b64": base64.b64encode(file_bytes).decode("ascii")
+            }
+        )
+    )
+
+
+
 def handle_typing(client_socket, current_user, request):
     """
     Обрабатывает команду typing.
@@ -1595,6 +1965,12 @@ def handle_client(client_socket, client_address):
 
             elif action == "pin_chat":
                 handle_pin_chat(client_socket, current_user, request)
+
+            elif action == "upload_file":
+                handle_upload_file(client_socket, current_user, request)
+
+            elif action == "download_file":
+                handle_download_file(client_socket, current_user, request)
 
             elif action == "send_message":
                 handle_send_message(client_socket, current_user, request)

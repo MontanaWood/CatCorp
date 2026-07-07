@@ -86,7 +86,7 @@ def recv_json(sock: socket.socket) -> dict | None:
         message_size = struct.unpack("!I", header)[0]
 
         # Защита от слишком больших сообщений
-        if message_size <= 0 or message_size > 10_000_000:
+        if message_size <= 0 or message_size > 50_000_000:
             print("Некорректный размер сообщения:", message_size)
             return None
 

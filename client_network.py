@@ -1,6 +1,7 @@
 # client_network.py
 # Клиентский сетевой модуль CatCorp: подключение к серверу и обмен JSON-сообщениями
 
+import base64
 import socket
 import threading
 import os
@@ -14,6 +15,8 @@ DEFAULT_SERVER_CONFIG = {
     "host": "127.0.0.1",
     "port": 5000
 }
+
+MAX_FILE_SIZE = 25 * 1024 * 1024
 
 
 def resource_path(relative_path: str) -> str:
@@ -663,6 +666,78 @@ class ClientNetwork:
         }
 
         return self._send_request_wait_response(request)
+
+    def upload_file(self, file_path: str, chat_type: str, target_id: int) -> dict:
+        """
+        Загружает файл на сервер и создаёт file-сообщение.
+        MVP-версия: без прогресса и отмены, файл передаётся base64 внутри JSON.
+        """
+        if not file_path:
+            return {
+                "status": "error",
+                "message": "Файл не выбран",
+                "data": None
+            }
+
+        try:
+            size_bytes = os.path.getsize(file_path)
+        except OSError:
+            return {
+                "status": "error",
+                "message": "Не удалось прочитать файл",
+                "data": None
+            }
+
+        if size_bytes <= 0:
+            return {
+                "status": "error",
+                "message": "Файл пустой",
+                "data": None
+            }
+
+        if size_bytes > MAX_FILE_SIZE:
+            return {
+                "status": "error",
+                "message": "Файл слишком большой. Максимум 25 МБ",
+                "data": None
+            }
+
+        try:
+            with open(file_path, "rb") as file:
+                file_bytes = file.read()
+        except OSError:
+            return {
+                "status": "error",
+                "message": "Не удалось прочитать файл",
+                "data": None
+            }
+
+        request = {
+            "action": "upload_file",
+            "chat_type": chat_type,
+            "original_name": os.path.basename(file_path),
+            "size_bytes": len(file_bytes),
+            "data_b64": base64.b64encode(file_bytes).decode("ascii")
+        }
+
+        if chat_type == "room":
+            request["room_id"] = target_id
+        else:
+            request["receiver_id"] = target_id
+
+        return self._send_request_wait_response(request, timeout=180.0)
+
+    def download_file(self, file_id: int) -> dict:
+        """
+        Скачивает файл с сервера.
+        В ответе data содержит original_name, size_bytes и data_b64.
+        """
+        request = {
+            "action": "download_file",
+            "file_id": file_id
+        }
+
+        return self._send_request_wait_response(request, timeout=180.0)
 
     def send_room_message(self, room_id: int, content: str, reply_to_message_id: int | None = None) -> dict:
         """
