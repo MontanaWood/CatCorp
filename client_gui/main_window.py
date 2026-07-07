@@ -585,6 +585,7 @@ class MainWindow(QWidget):
         self.reply_message = None
         self.tray_icon = None
         self.force_close = False
+        self.setAcceptDrops(True)
 
         self.users = []
         self.recent_chats = []
@@ -742,6 +743,7 @@ class MainWindow(QWidget):
         self.empty_chat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.messages_list = QListWidget()
+        self.messages_list.setAcceptDrops(True)
         self.messages_list.setWordWrap(True)
         self.messages_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.messages_list.setTextElideMode(Qt.TextElideMode.ElideNone)
@@ -764,9 +766,21 @@ class MainWindow(QWidget):
         self.reply_panel.setLayout(reply_layout)
         self.reply_panel.hide()
 
+        self.attachment_panel = QWidget()
+        self.attachment_panel.hide()
+
         self.attachment_label = QLabel("")
         self.attachment_label.setWordWrap(True)
-        self.attachment_label.hide()
+
+        self.clear_attachment_button = QPushButton("Очистить")
+        self.clear_attachment_button.setToolTip("Убрать выбранные файлы")
+        self.clear_attachment_button.clicked.connect(self.clear_selected_files)
+
+        attachment_layout = QHBoxLayout()
+        attachment_layout.setContentsMargins(0, 0, 0, 0)
+        attachment_layout.addWidget(self.attachment_label, 1)
+        attachment_layout.addWidget(self.clear_attachment_button)
+        self.attachment_panel.setLayout(attachment_layout)
 
         self.message_input = QLineEdit()
         self.message_input.setPlaceholderText("Введите сообщение...")
@@ -781,6 +795,7 @@ class MainWindow(QWidget):
         self.send_button.clicked.connect(self.send_message)
 
         self.input_panel = QWidget()
+        self.input_panel.setAcceptDrops(True)
         input_layout = QHBoxLayout()
         input_layout.setContentsMargins(0, 0, 0, 0)
         input_layout.addWidget(self.attach_button)
@@ -794,7 +809,7 @@ class MainWindow(QWidget):
         right_layout.addWidget(self.empty_chat_label, 1)
         right_layout.addWidget(self.messages_list)
         right_layout.addWidget(self.reply_panel)
-        right_layout.addWidget(self.attachment_label)
+        right_layout.addWidget(self.attachment_panel)
         right_layout.addWidget(self.input_panel)
 
         main_layout = QHBoxLayout()
@@ -1907,7 +1922,7 @@ class MainWindow(QWidget):
 
     def select_files(self):
         """
-        Выбирает один или несколько файлов для отправки.
+        Выбирает один или несколько файлов для отправки через Explorer.
         """
         if not self.selected_user:
             QMessageBox.information(self, "Нет чата", "Сначала выберите личный чат или группу")
@@ -1920,30 +1935,52 @@ class MainWindow(QWidget):
             "Все файлы (*.*)"
         )
 
+        self.add_files_to_selection(file_paths)
+
+    def add_files_to_selection(self, file_paths: list[str]):
+        """
+        Добавляет файлы в очередь отправки.
+
+        Используется и кнопкой '+', и drag-and-drop.
+        """
         if not file_paths:
+            return
+
+        if not self.selected_user:
+            QMessageBox.information(self, "Нет чата", "Сначала выберите личный чат или группу")
             return
 
         accepted = []
         skipped = []
 
+        existing_paths = set(self.selected_file_paths)
+
         for file_path in file_paths:
             path = Path(file_path)
 
             if not path.exists() or not path.is_file():
-                skipped.append(path.name)
+                skipped.append(path.name or str(file_path))
                 continue
 
-            size = path.stat().st_size
+            try:
+                size = path.stat().st_size
+            except OSError:
+                skipped.append(path.name)
+                continue
 
             if size <= 0 or size > MAX_FILE_SIZE:
                 skipped.append(path.name)
                 continue
 
-            if str(path) not in self.selected_file_paths:
-                accepted.append(str(path))
+            normalized_path = str(path)
 
-        self.selected_file_paths.extend(accepted)
-        self.update_attachment_label()
+            if normalized_path not in existing_paths:
+                accepted.append(normalized_path)
+                existing_paths.add(normalized_path)
+
+        if accepted:
+            self.selected_file_paths.extend(accepted)
+            self.update_attachment_label()
 
         if skipped:
             QMessageBox.warning(
@@ -1952,15 +1989,78 @@ class MainWindow(QWidget):
                 "Файл должен быть не пустым и не больше 25 МБ:\\n" + "\\n".join(skipped[:10])
             )
 
+    def extract_local_file_paths_from_drop(self, event) -> list[str]:
+        """
+        Достаёт локальные файлы из drag-and-drop события.
+        Папки не добавляются.
+        """
+        mime_data = event.mimeData()
+
+        if not mime_data.hasUrls():
+            return []
+
+        file_paths = []
+
+        for url in mime_data.urls():
+            if not url.isLocalFile():
+                continue
+
+            local_path = url.toLocalFile()
+
+            if local_path:
+                file_paths.append(local_path)
+
+        return file_paths
+
+    def dragEnterEvent(self, event):
+        """
+        Разрешает перетаскивание файлов в окно чата.
+        """
+        if not self.selected_user:
+            event.ignore()
+            return
+
+        if self.extract_local_file_paths_from_drop(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        """
+        Поддерживает drag-and-drop во время движения мыши над окном.
+        """
+        if not self.selected_user:
+            event.ignore()
+            return
+
+        if self.extract_local_file_paths_from_drop(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        """
+        Добавляет перетащенные файлы в очередь отправки.
+        После этого пользователь нажимает 'Отправить'.
+        """
+        file_paths = self.extract_local_file_paths_from_drop(event)
+
+        if not file_paths:
+            event.ignore()
+            return
+
+        self.add_files_to_selection(file_paths)
+        event.acceptProposedAction()
+
     def update_attachment_label(self):
         """
         Показывает список выбранных файлов перед отправкой.
         """
-        if not hasattr(self, "attachment_label"):
+        if not hasattr(self, "attachment_panel"):
             return
 
         if not self.selected_file_paths:
-            self.attachment_label.hide()
+            self.attachment_panel.hide()
             self.attachment_label.setText("")
             return
 
@@ -1970,8 +2070,8 @@ class MainWindow(QWidget):
         if len(names) > 3:
             preview += f" и ещё {len(names) - 3}"
 
-        self.attachment_label.setText(f"Прикреплено: {preview}")
-        self.attachment_label.show()
+        self.attachment_label.setText(f"Прикреплено: {preview} — нажмите «Отправить»")
+        self.attachment_panel.show()
 
     def clear_selected_files(self):
         """
@@ -1979,8 +2079,8 @@ class MainWindow(QWidget):
         """
         self.selected_file_paths = []
 
-        if hasattr(self, "attachment_label"):
-            self.attachment_label.hide()
+        if hasattr(self, "attachment_panel"):
+            self.attachment_panel.hide()
             self.attachment_label.setText("")
 
     def downloads_dir(self) -> Path:
@@ -2056,6 +2156,9 @@ class MainWindow(QWidget):
         self.message_input.setEnabled(False)
         self.attach_button.setEnabled(False)
 
+        if hasattr(self, "clear_attachment_button"):
+            self.clear_attachment_button.setEnabled(False)
+
         try:
             if content:
                 if self.selected_chat_type == "room":
@@ -2117,6 +2220,10 @@ class MainWindow(QWidget):
             self.send_button.setEnabled(True)
             self.message_input.setEnabled(True)
             self.attach_button.setEnabled(True)
+
+            if hasattr(self, "clear_attachment_button"):
+                self.clear_attachment_button.setEnabled(True)
+
             self.message_input.setFocus()
 
     def handle_new_message(self, message: dict):
