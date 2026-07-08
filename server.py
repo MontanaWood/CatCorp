@@ -1,4 +1,4 @@
-# Серверная часть CatCorp: принимает TCP-подключения клиентов, работает с БД и пересылает сообщения
+# Серверная часть Intercom: принимает TCP-подключения клиентов, работает с БД и пересылает сообщения
 
 import base64
 import binascii
@@ -2020,7 +2020,7 @@ def handle_client(client_socket, client_address):
 
 def start_server():
     """
-    Запускает TCP-сервер CatCorp.
+    Запускает TCP-сервер Intercom.
     """
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -2031,7 +2031,7 @@ def start_server():
         server_socket.bind((SERVER_HOST, SERVER_PORT))
         server_socket.listen()
 
-        print("Сервер CatCorp запущен")
+        print("Сервер Intercom запущен")
         print(f"Адрес: {SERVER_HOST}")
         print(f"Порт: {SERVER_PORT}")
         print("Ожидание подключений...")

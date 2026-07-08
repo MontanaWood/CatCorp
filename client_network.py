@@ -1,5 +1,5 @@
 # client_network.py
-# Клиентский сетевой модуль CatCorp: подключение к серверу и обмен JSON-сообщениями
+# Клиентский сетевой модуль Intercom: подключение к серверу и обмен JSON-сообщениями
 
 import base64
 import socket
@@ -192,7 +192,7 @@ def load_server_config() -> tuple[str, int]:
 
 class ClientNetwork:
     """
-    Класс сетевого клиента CatCorp.
+    Класс сетевого клиента Intercom.
 
     GUI будет использовать этот класс:
     - connect()

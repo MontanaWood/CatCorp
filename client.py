@@ -1,5 +1,5 @@
 # client.py
-# Точка входа клиентского GUI-приложения CatCorp
+# Точка входа клиентского GUI-приложения Intercom
 
 import sys
 
@@ -10,7 +10,7 @@ from client_gui.login_window import LoginWindow
 
 def main():
     """
-    Запускает клиентское приложение CatCorp.
+    Запускает клиентское приложение Intercom.
     """
     app = QApplication(sys.argv)
 

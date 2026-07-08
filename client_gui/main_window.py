@@ -1,5 +1,5 @@
 # client_gui/main_window.py
-# Простое главное окно CatCorp без кастомного дизайна, но с новыми функциями
+# Простое главное окно Intercom без кастомного дизайна, но с новыми функциями
 
 from html import escape
 import base64
@@ -33,11 +33,16 @@ from PyQt6.QtWidgets import (
     QApplication,
     QStyle,
     QFrame,
-    QAbstractItemView
+    QAbstractItemView,
+    QSizePolicy
 )
 from PyQt6.QtGui import QAction, QIcon, QShortcut, QKeySequence
 
 from client_network import ClientNetwork, load_auth_token, clear_auth_token
+
+
+APP_NAME = "Intercom"
+DOWNLOADS_FOLDER_NAME = APP_NAME
 
 
 DEFAULT_SETTINGS = {
@@ -50,6 +55,17 @@ DEFAULT_SETTINGS = {
     "muted_room_ids": [],
     "muted_user_ids": []
 }
+
+
+# Горизонтальные отступы карточки чата (10px слева + 10px справа из card_layout)
+# плюс небольшой запас на рамку/скроллбар. Используется и при создании карточки,
+# и при пересчёте её размера — чтобы обе формулы никогда не расходились.
+CHAT_CARD_HORIZONTAL_PADDING = 26
+
+# Фиксированная ширина левой панели делает геометрию стабильной:
+# список чатов больше не пересчитывает карточки так, будто они могут залезать в правую область.
+SIDEBAR_PANEL_WIDTH = 320
+CHAT_CARD_EDGE_GAP = 0
 
 
 STATUS_LABELS = {
@@ -89,6 +105,16 @@ QLineEdit, QComboBox {
     padding: 7px 9px;
     selection-background-color: #2563eb;
     selection-color: #ffffff;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    color: #111827;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    padding: 4px;
+    selection-background-color: #dbeafe;
+    selection-color: #111827;
 }
 
 QLineEdit:focus, QComboBox:focus {
@@ -140,6 +166,40 @@ QListWidget::item:selected {
 
 QListWidget::item:hover {
     background-color: #eef2ff;
+}
+
+QListWidget#ChatsList {
+    background: transparent;
+    border: none;
+    padding: 0px;
+    margin: 0px;
+    outline: 0;
+}
+
+QListWidget#ChatsList::item {
+    background: transparent;
+    border: none;
+    padding: 0px;
+    margin: 0px;
+}
+
+QListWidget#ChatsList::item:selected,
+QListWidget#ChatsList::item:hover {
+    background: transparent;
+    border: none;
+}
+
+QListWidget#MessagesList::item {
+    background: transparent;
+    border: none;
+    padding: 0px;
+    margin: 0px;
+}
+
+QListWidget#MessagesList::item:selected,
+QListWidget#MessagesList::item:hover {
+    background: transparent;
+    border: none;
 }
 
 QMenu {
@@ -212,6 +272,80 @@ QScrollBar::sub-line:horizontal {
 QScrollBar::add-page:horizontal,
 QScrollBar::sub-page:horizontal {
     background: transparent;
+}
+
+QFrame#SidebarPanel {
+    background-color: #eef2ff;
+    border: 1px solid #dbe3ef;
+    border-radius: 14px;
+}
+
+QFrame#ProfileCard {
+    background-color: #ffffff;
+    border: 1px solid #dbe3ef;
+    border-radius: 12px;
+}
+
+QLabel#ProfileName {
+    background-color: transparent;
+    color: #111827;
+    font-size: 11pt;
+    font-weight: 600;
+}
+
+QLabel#ProfileMeta {
+    background-color: transparent;
+    color: #64748b;
+    font-size: 8pt;
+    font-weight: 400;
+}
+
+QLabel#SectionTitle {
+    background-color: transparent;
+    color: #64748b;
+    font-size: 9pt;
+    font-weight: 500;
+}
+
+QFrame#ChatItemCard {
+    background-color: #ffffff;
+    border: none;
+    border-radius: 10px;
+}
+
+QFrame#ChatItemCardSelected {
+    background-color: #dbeafe;
+    border: none;
+    border-radius: 10px;
+}
+
+QLabel#ChatName {
+    background-color: transparent;
+    color: #111827;
+    font-weight: 600;
+}
+
+QLabel#ChatMeta {
+    background-color: transparent;
+    color: #64748b;
+    font-size: 8pt;
+    font-weight: 400;
+}
+
+QLabel#ChatPreview {
+    background-color: transparent;
+    color: #475569;
+    font-size: 9pt;
+    font-weight: 400;
+}
+
+QLabel#UnreadBadge {
+    background-color: #2563eb;
+    color: #ffffff;
+    border-radius: 9px;
+    padding: 2px 6px;
+    font-size: 8pt;
+    font-weight: 600;
 }
 
 QFrame#MessageBubbleOwn {
@@ -276,6 +410,18 @@ QLabel#FileHint {
 QWidget#MessageRow {
     background-color: transparent;
 }
+
+QFrame#DateSeparator {
+    background-color: #e2e8f0;
+    border-radius: 10px;
+}
+
+QLabel#DateSeparatorText {
+    background-color: transparent;
+    color: #475569;
+    font-size: 8pt;
+    font-weight: 700;
+}
 """
 
 
@@ -301,6 +447,16 @@ QLineEdit, QComboBox {
     border-radius: 8px;
     padding: 7px 9px;
     selection-background-color: #3b82f6;
+    selection-color: #ffffff;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #1f2937;
+    color: #f9fafb;
+    border: 1px solid #374151;
+    border-radius: 8px;
+    padding: 4px;
+    selection-background-color: #2563eb;
     selection-color: #ffffff;
 }
 
@@ -353,6 +509,40 @@ QListWidget::item:selected {
 
 QListWidget::item:hover {
     background-color: #374151;
+}
+
+QListWidget#ChatsList {
+    background: transparent;
+    border: none;
+    padding: 0px;
+    margin: 0px;
+    outline: 0;
+}
+
+QListWidget#ChatsList::item {
+    background: transparent;
+    border: none;
+    padding: 0px;
+    margin: 0px;
+}
+
+QListWidget#ChatsList::item:selected,
+QListWidget#ChatsList::item:hover {
+    background: transparent;
+    border: none;
+}
+
+QListWidget#MessagesList::item {
+    background: transparent;
+    border: none;
+    padding: 0px;
+    margin: 0px;
+}
+
+QListWidget#MessagesList::item:selected,
+QListWidget#MessagesList::item:hover {
+    background: transparent;
+    border: none;
 }
 
 QMenu {
@@ -427,6 +617,80 @@ QScrollBar::sub-page:horizontal {
     background: transparent;
 }
 
+QFrame#SidebarPanel {
+    background-color: #0f172a;
+    border: 1px solid #1f2937;
+    border-radius: 14px;
+}
+
+QFrame#ProfileCard {
+    background-color: #1f2937;
+    border: 1px solid #374151;
+    border-radius: 12px;
+}
+
+QLabel#ProfileName {
+    background-color: transparent;
+    color: #f9fafb;
+    font-size: 11pt;
+    font-weight: 600;
+}
+
+QLabel#ProfileMeta {
+    background-color: transparent;
+    color: #cbd5e1;
+    font-size: 8pt;
+    font-weight: 400;
+}
+
+QLabel#SectionTitle {
+    background-color: transparent;
+    color: #cbd5e1;
+    font-size: 9pt;
+    font-weight: 500;
+}
+
+QFrame#ChatItemCard {
+    background-color: #1f2937;
+    border: none;
+    border-radius: 10px;
+}
+
+QFrame#ChatItemCardSelected {
+    background-color: #1e40af;
+    border: none;
+    border-radius: 10px;
+}
+
+QLabel#ChatName {
+    background-color: transparent;
+    color: #f9fafb;
+    font-weight: 600;
+}
+
+QLabel#ChatMeta {
+    background-color: transparent;
+    color: #cbd5e1;
+    font-size: 8pt;
+    font-weight: 400;
+}
+
+QLabel#ChatPreview {
+    background-color: transparent;
+    color: #d1d5db;
+    font-size: 9pt;
+    font-weight: 400;
+}
+
+QLabel#UnreadBadge {
+    background-color: #3b82f6;
+    color: #ffffff;
+    border-radius: 9px;
+    padding: 2px 6px;
+    font-size: 8pt;
+    font-weight: 600;
+}
+
 QFrame#MessageBubbleOwn {
     background-color: #1d4ed8;
     border: 1px solid #2563eb;
@@ -488,6 +752,18 @@ QLabel#FileHint {
 
 QWidget#MessageRow {
     background-color: transparent;
+}
+
+QFrame#DateSeparator {
+    background-color: #374151;
+    border-radius: 10px;
+}
+
+QLabel#DateSeparatorText {
+    background-color: transparent;
+    color: #d1d5db;
+    font-size: 8pt;
+    font-weight: 700;
 }
 """
 
@@ -643,6 +919,89 @@ def save_settings(settings: dict):
         pass
 
 
+def translate_dialog_buttons(buttons: QDialogButtonBox):
+    """
+    Русифицирует стандартные кнопки QDialogButtonBox.
+    """
+    labels = {
+        QDialogButtonBox.StandardButton.Ok: "ОК",
+        QDialogButtonBox.StandardButton.Cancel: "Отмена",
+        QDialogButtonBox.StandardButton.Yes: "Да",
+        QDialogButtonBox.StandardButton.No: "Нет",
+        QDialogButtonBox.StandardButton.Save: "Сохранить",
+        QDialogButtonBox.StandardButton.Apply: "Применить",
+        QDialogButtonBox.StandardButton.Close: "Закрыть"
+    }
+
+    for standard_button, label in labels.items():
+        button = buttons.button(standard_button)
+
+        if button is not None:
+            button.setText(label)
+
+
+def show_message_box(parent, title: str, message: str, icon: QMessageBox.Icon):
+    """
+    Показывает QMessageBox с русской кнопкой ОК.
+    """
+    box = QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setText(message)
+    box.setIcon(icon)
+    ok_button = box.addButton("ОК", QMessageBox.ButtonRole.AcceptRole)
+    box.setDefaultButton(ok_button)
+    box.exec()
+
+
+def show_warning(parent, title: str, message: str):
+    show_message_box(parent, title, message, QMessageBox.Icon.Warning)
+
+
+def show_information(parent, title: str, message: str):
+    show_message_box(parent, title, message, QMessageBox.Icon.Information)
+
+
+def ask_yes_no(parent, title: str, message: str) -> bool:
+    """
+    Вопрос с русскими кнопками Да / Нет.
+    """
+    box = QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setText(message)
+    box.setIcon(QMessageBox.Icon.Question)
+
+    yes_button = box.addButton("Да", QMessageBox.ButtonRole.YesRole)
+    no_button = box.addButton("Нет", QMessageBox.ButtonRole.NoRole)
+
+    box.setDefaultButton(no_button)
+    box.exec()
+
+    return box.clickedButton() == yes_button
+
+
+def get_multiline_text(parent, title: str, label: str, text: str = ""):
+    """
+    Аналог get_multiline_text, но с русскими кнопками.
+    """
+    dialog = QInputDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setLabelText(label)
+    dialog.setInputMode(QInputDialog.InputMode.TextInput)
+    dialog.setTextValue(text)
+    dialog.setOkButtonText("ОК")
+    dialog.setCancelButtonText("Отмена")
+
+    try:
+        dialog.setOption(QInputDialog.InputDialogOption.UsePlainTextEditForTextInput, True)
+    except AttributeError:
+        pass
+
+    if dialog.exec() == QDialog.DialogCode.Accepted:
+        return dialog.textValue(), True
+
+    return "", False
+
+
 def short_text(text: str, max_len: int = 70) -> str:
     """
     Делает короткий предпросмотр текста.
@@ -715,6 +1074,7 @@ class UserSelectDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok |
             QDialogButtonBox.StandardButton.Cancel
         )
+        translate_dialog_buttons(buttons)
         buttons.accepted.connect(self.accept_selected_user)
         buttons.rejected.connect(self.reject)
 
@@ -765,6 +1125,7 @@ class GroupCreateDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok |
             QDialogButtonBox.StandardButton.Cancel
         )
+        translate_dialog_buttons(buttons)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
@@ -831,6 +1192,7 @@ class GroupAddMembersDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok |
             QDialogButtonBox.StandardButton.Cancel
         )
+        translate_dialog_buttons(buttons)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
@@ -893,6 +1255,7 @@ class SettingsDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok |
             QDialogButtonBox.StandardButton.Cancel
         )
+        translate_dialog_buttons(buttons)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
@@ -977,6 +1340,7 @@ class ProfileDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok |
             QDialogButtonBox.StandardButton.Cancel
         )
+        translate_dialog_buttons(buttons)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
@@ -1041,6 +1405,7 @@ class MiniProfileDialog(QDialog):
         info.setWordWrap(True)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        translate_dialog_buttons(buttons)
         buttons.accepted.connect(self.accept)
 
         layout = QVBoxLayout()
@@ -1054,7 +1419,7 @@ class MiniProfileDialog(QDialog):
 
 class MainWindow(QWidget):
     """
-    Главное окно чата CatCorp.
+    Главное окно чата Intercom.
     """
 
     def __init__(self, network: ClientNetwork):
@@ -1104,7 +1469,7 @@ class MainWindow(QWidget):
         self.typing_timer.timeout.connect(self.stop_typing)
         self.is_typing_sent = False
 
-        self.setWindowTitle("CatCorp — Чат")
+        self.setWindowTitle(f"{APP_NAME} — Чат")
         self.resize(940, 600)
 
         self._build_ui()
@@ -1162,6 +1527,9 @@ class MainWindow(QWidget):
         self.chats_list.clearSelection()
         self.set_chat_open_state(False)
 
+        if hasattr(self, "chats_list"):
+            self.refresh_chat_selection_styles()
+
     def keyPressEvent(self, event):
         """
         Esc закрывает текущий чат даже если фокус находится внутри окна.
@@ -1175,6 +1543,8 @@ class MainWindow(QWidget):
 
     def _build_ui(self):
         self.user_info_label = QLabel()
+        self.user_info_label.setObjectName("ProfileName")
+        self.user_info_label.setWordWrap(True)
         self.update_user_info_label()
 
         self.profile_button = QPushButton("Профиль")
@@ -1187,6 +1557,7 @@ class MainWindow(QWidget):
         self.logout_button.clicked.connect(self.logout_from_account)
 
         self.chats_label = QLabel("Недавние чаты")
+        self.chats_label.setObjectName("SectionTitle")
 
         self.new_chat_button = QPushButton("+ Новый чат")
         self.new_chat_button.clicked.connect(self.open_new_chat_dialog)
@@ -1195,30 +1566,73 @@ class MainWindow(QWidget):
         self.new_group_button.clicked.connect(self.open_new_group_dialog)
 
         self.chats_list = QListWidget()
-        self.chats_list.setWordWrap(True)
+        self.chats_list.setObjectName("ChatsList")
+        self.chats_list.setWordWrap(False)
+        self.chats_list.setSpacing(0)
         self.chats_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.chats_list.setFrameShape(QFrame.Shape.NoFrame)
+        self.chats_list.setContentsMargins(0, 0, 0, 0)
+        self.chats_list.setViewportMargins(0, 0, 0, 0)
+        self.chats_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.chats_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.chats_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.chats_list.verticalScrollBar().setSingleStep(12)
+        self.chats_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.chats_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        # Как и у messages_list: без Adjust список не пересчитывает раскладку
+        # при изменении ширины, из-за чего карточки "застревают" на ширине,
+        # посчитанной ещё до того, как окно реально было показано.
+        self.chats_list.setResizeMode(QListView.ResizeMode.Adjust)
         self.chats_list.itemClicked.connect(self.handle_chat_selected)
         self.chats_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.chats_list.customContextMenuRequested.connect(self.open_chat_context_menu)
 
         left_layout = QVBoxLayout()
-        left_layout.addWidget(self.user_info_label)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+
+        self.sidebar_panel = QFrame()
+        self.sidebar_panel.setObjectName("SidebarPanel")
+        self.sidebar_panel.setMinimumWidth(SIDEBAR_PANEL_WIDTH)
+        self.sidebar_panel.setMaximumWidth(SIDEBAR_PANEL_WIDTH)
+        self.sidebar_panel.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
+
+        sidebar_layout = QVBoxLayout()
+        sidebar_layout.setContentsMargins(10, 10, 10, 10)
+        sidebar_layout.setSpacing(7)
+
+        self.profile_card = QFrame()
+        self.profile_card.setObjectName("ProfileCard")
+
+        profile_card_layout = QVBoxLayout()
+        profile_card_layout.setContentsMargins(10, 9, 10, 9)
+        profile_card_layout.setSpacing(7)
+        profile_card_layout.addWidget(self.user_info_label)
 
         left_buttons_layout = QHBoxLayout()
+        left_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        left_buttons_layout.setSpacing(6)
         left_buttons_layout.addWidget(self.profile_button)
         left_buttons_layout.addWidget(self.settings_button)
         left_buttons_layout.addWidget(self.logout_button)
-        left_layout.addLayout(left_buttons_layout)
+        profile_card_layout.addLayout(left_buttons_layout)
 
-        left_layout.addWidget(self.chats_label)
+        self.profile_card.setLayout(profile_card_layout)
+        sidebar_layout.addWidget(self.profile_card)
+
+        sidebar_layout.addWidget(self.chats_label)
+
         chat_buttons_layout = QHBoxLayout()
+        chat_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        chat_buttons_layout.setSpacing(6)
         chat_buttons_layout.addWidget(self.new_chat_button)
         chat_buttons_layout.addWidget(self.new_group_button)
-        left_layout.addLayout(chat_buttons_layout)
-        left_layout.addWidget(self.chats_list)
+        sidebar_layout.addLayout(chat_buttons_layout)
+
+        sidebar_layout.addWidget(self.chats_list, 1)
+
+        self.sidebar_panel.setLayout(sidebar_layout)
+        left_layout.addWidget(self.sidebar_panel)
 
         self.chat_title_label = QLabel("Выберите чат")
         self.chat_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1231,12 +1645,15 @@ class MainWindow(QWidget):
         self.empty_chat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.messages_list = QListWidget()
+        self.messages_list.setObjectName("MessagesList")
         self.messages_list.setAcceptDrops(True)
         self.messages_list.setWordWrap(True)
         self.messages_list.setSpacing(8)
         self.messages_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.messages_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.messages_list.verticalScrollBar().setSingleStep(12)
+        self.messages_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.messages_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.messages_list.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.messages_list.setResizeMode(QListView.ResizeMode.Adjust)
         self.messages_list.setUniformItemSizes(False)
@@ -1304,8 +1721,10 @@ class MainWindow(QWidget):
         right_layout.addWidget(self.input_panel)
 
         main_layout = QHBoxLayout()
-        main_layout.addLayout(left_layout, 1)
-        main_layout.addLayout(right_layout, 3)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(10)
+        main_layout.addLayout(left_layout, 0)
+        main_layout.addLayout(right_layout, 1)
 
         self.setLayout(main_layout)
 
@@ -1326,10 +1745,10 @@ class MainWindow(QWidget):
             icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
 
         self.tray_icon = QSystemTrayIcon(icon, self)
-        self.tray_icon.setToolTip("CatCorp")
+        self.tray_icon.setToolTip(APP_NAME)
 
         tray_menu = QMenu(self)
-        open_action = QAction("Открыть CatCorp", self)
+        open_action = QAction(f"Открыть {APP_NAME}", self)
         quit_action = QAction("Закрыть приложение", self)
 
         open_action.triggered.connect(self.show_from_tray)
@@ -1385,7 +1804,11 @@ class MainWindow(QWidget):
             username = self.current_user.get("username")
             role = self.current_user.get("role")
             user_status = self.status_to_text(self.current_user.get("user_status", "available"))
-            self.user_info_label.setText(f"Вы вошли как: {display_name} ({role}, {user_status})\nЛогин: {username}")
+
+            self.user_info_label.setText(
+                f"{display_name}\n"
+                f"@{username} · {role} · {user_status}"
+            )
         else:
             self.user_info_label.setText("Пользователь не определён")
 
@@ -1412,7 +1835,7 @@ class MainWindow(QWidget):
         data = dialog.get_profile_data()
 
         if not data["display_name"]:
-            QMessageBox.warning(self, "Ошибка", "Введите отображаемое имя")
+            show_warning(self, "Ошибка", "Введите отображаемое имя")
             return
 
         response = self.network.update_profile(
@@ -1423,7 +1846,7 @@ class MainWindow(QWidget):
         )
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось обновить профиль"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось обновить профиль"))
             return
 
         self.current_user = self.network.user
@@ -1439,29 +1862,29 @@ class MainWindow(QWidget):
 
         if old_password or new_password or repeat_password:
             if not old_password or not new_password or not repeat_password:
-                QMessageBox.warning(self, "Ошибка", "Для смены пароля заполните все поля пароля")
+                show_warning(self, "Ошибка", "Для смены пароля заполните все поля пароля")
                 return
 
             if new_password != repeat_password:
-                QMessageBox.warning(self, "Ошибка", "Новые пароли не совпадают")
+                show_warning(self, "Ошибка", "Новые пароли не совпадают")
                 return
 
             password_response = self.network.change_password(old_password, new_password)
 
             if password_response.get("status") != "ok":
-                QMessageBox.warning(self, "Ошибка", password_response.get("message", "Не удалось изменить пароль"))
+                show_warning(self, "Ошибка", password_response.get("message", "Не удалось изменить пароль"))
                 return
 
-        QMessageBox.information(self, "Профиль", "Профиль сохранён")
+        show_information(self, "Профиль", "Профиль сохранён")
 
     def logout_from_account(self):
-        answer = QMessageBox.question(
+        answer = ask_yes_no(
             self,
             "Выход",
             "Выйти из аккаунта? При следующем запуске нужно будет снова ввести логин и пароль."
         )
 
-        if answer != QMessageBox.StandardButton.Yes:
+        if not answer:
             return
 
         token = load_auth_token()
@@ -1488,7 +1911,7 @@ class MainWindow(QWidget):
         response = self.network.get_users()
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось загрузить список пользователей"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось загрузить список пользователей"))
             return
 
         data = response.get("data", {})
@@ -1498,7 +1921,7 @@ class MainWindow(QWidget):
         response = self.network.get_recent_chats()
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось загрузить недавние чаты"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось загрузить недавние чаты"))
             return
 
         data = response.get("data", {})
@@ -1556,54 +1979,247 @@ class MainWindow(QWidget):
                 if int(chat_room_id) == int(current_room_id):
                     chat["unread_count"] = 0
 
+    def is_chat_selected(self, chat: dict) -> bool:
+        """
+        Проверяет, является ли чат текущим выбранным.
+        """
+        if not self.selected_user:
+            return False
+
+        chat_type = chat.get("chat_type", "user")
+        selected_type = self.selected_chat_type or self.selected_user.get("chat_type", "user")
+
+        try:
+            return int(chat.get("id")) == int(self.selected_user.get("id")) and chat_type == selected_type
+        except (TypeError, ValueError):
+            return False
+
+    def chat_item_width(self) -> int:
+        """
+        Рабочая ширина карточки чата.
+        """
+        if not hasattr(self, "chats_list"):
+            return 260
+
+        viewport_width = self.chats_list.viewport().width()
+
+        if viewport_width <= 0:
+            return 260
+
+        return max(220, viewport_width - CHAT_CARD_EDGE_GAP)
+
+    def create_chat_item_widget(self, chat: dict) -> QWidget:
+        """
+        Создаёт карточку чата для левого списка.
+        """
+        chat_type = chat.get("chat_type", "user")
+        display_name = chat.get("display_name") or chat.get("username", "unknown")
+        last_message = chat.get("last_message") or ""
+        unread_count = int(chat.get("unread_count", 0))
+        selected = self.is_chat_selected(chat)
+
+        root = QWidget()
+        root.setObjectName("ChatItemRoot")
+        root.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        root_layout = QVBoxLayout()
+        root_layout.setContentsMargins(0, 3, 0, 3)
+        root_layout.setSpacing(0)
+
+        card = QFrame()
+        card.setObjectName("ChatItemCardSelected" if selected else "ChatItemCard")
+        card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        # Отступы карточки такие же, как у карточки профиля (единый дизайн-код сайдбара).
+        card_layout = QVBoxLayout()
+        card_layout.setContentsMargins(10, 9, 10, 9)
+        card_layout.setSpacing(3)
+
+        top_layout = QHBoxLayout()
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(4)
+
+        icons = []
+
+        if chat_type == "room":
+            icons.append("👥")
+            room_id = chat.get("room_id") or chat.get("id")
+
+            if self.is_room_muted(room_id):
+                icons.append("🔕")
+        else:
+            if bool(chat.get("pinned", False)):
+                icons.append("📌")
+
+            if self.is_user_muted(chat.get("id")):
+                icons.append("🔕")
+
+        compact_name = short_text(display_name, 30)
+        title_text = f"{' '.join(icons)} {compact_name}".strip()
+        card_width = self.chat_item_width()
+        text_width = max(150, card_width - CHAT_CARD_HORIZONTAL_PADDING)
+
+        title_label = QLabel(title_text)
+        title_label.setObjectName("ChatName")
+        title_label.setWordWrap(False)
+        title_label.setMaximumWidth(text_width)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        title_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        top_layout.addWidget(title_label, 1)
+
+        if unread_count > 0:
+            badge = QLabel(str(unread_count if unread_count < 100 else "99+"))
+            badge.setObjectName("UnreadBadge")
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            top_layout.addWidget(badge, 0)
+
+        card_layout.addLayout(top_layout)
+
+        if chat_type == "room":
+            meta_text = "группа"
+        else:
+            online = bool(chat.get("online"))
+            status_text = "online" if online else "offline"
+
+            if online:
+                profile_status = self.status_to_text(chat.get("user_status", "available"))
+                meta_text = f"{status_text} · {profile_status}"
+            else:
+                meta_text = status_text
+
+        meta_label = QLabel(short_text(meta_text, 34))
+        meta_label.setObjectName("ChatMeta")
+        meta_label.setWordWrap(False)
+        meta_label.setMaximumWidth(text_width)
+        meta_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        card_layout.addWidget(meta_label)
+
+        preview = short_text(last_message, 46) if last_message else "Нет сообщений"
+        preview_label = QLabel(preview)
+        preview_label.setObjectName("ChatPreview")
+        preview_label.setWordWrap(True)
+        preview_label.setMaximumWidth(text_width)
+        preview_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        card_layout.addWidget(preview_label)
+
+        card.setLayout(card_layout)
+        root_layout.addWidget(card)
+        root.setLayout(root_layout)
+
+        return root
+
+    def update_chat_item_size(self, item: QListWidgetItem, widget: QWidget):
+        """
+        Пересчитывает размер карточки чата.
+
+        Метод может вызываться отложенно через QTimer.singleShot.
+        Если список чатов уже перерисован, старый QListWidgetItem может быть удалён.
+        В таком случае просто выходим без ошибки.
+        """
+        if item is None or widget is None:
+            return
+
+        if not hasattr(self, "chats_list"):
+            return
+
+        try:
+            if self.chats_list.row(item) < 0:
+                return
+
+            width = self.chat_item_width()
+            widget.setMinimumWidth(width)
+            widget.setMaximumWidth(width)
+            widget.setFixedWidth(width)
+
+            for frame in widget.findChildren(QFrame):
+                if frame.objectName() in {"ChatItemCard", "ChatItemCardSelected"}:
+                    frame.setMinimumWidth(width)
+                    frame.setMaximumWidth(width)
+
+            layout = widget.layout()
+
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
+
+            for label in widget.findChildren(QLabel):
+                if label.objectName() in {"ChatName", "ChatMeta", "ChatPreview"}:
+                    label.setMaximumWidth(max(150, width - CHAT_CARD_HORIZONTAL_PADDING))
+
+            widget.updateGeometry()
+            widget.adjustSize()
+            item.setSizeHint(QSize(width, max(72, widget.sizeHint().height() + 4)))
+
+        except RuntimeError:
+            return
+
+    def refresh_sidebar_geometry(self):
+        """
+        Стабилизирует геометрию левой панели и карточек чатов.
+
+        Это нужно после первого показа окна: до show() Qt иногда отдаёт временную
+        ширину viewport, из-за чего карточки чатов визуально уезжают вправо.
+        """
+        if not hasattr(self, "sidebar_panel") or not hasattr(self, "chats_list"):
+            return
+
+        self.sidebar_panel.setMinimumWidth(SIDEBAR_PANEL_WIDTH)
+        self.sidebar_panel.setMaximumWidth(SIDEBAR_PANEL_WIDTH)
+        self.chats_list.updateGeometry()
+        self.refresh_chat_item_sizes()
+
+    def refresh_chat_item_sizes(self):
+        """
+        Пересчитывает ширину карточек чатов при изменении размера окна.
+        """
+        if not hasattr(self, "chats_list"):
+            return
+
+        for index in range(self.chats_list.count()):
+            item = self.chats_list.item(index)
+            widget = self.chats_list.itemWidget(item)
+
+            if widget is not None:
+                self.update_chat_item_size(item, widget)
+
+    def refresh_chat_selection_styles(self):
+        """
+        Обновляет только подсветку выбранного чата без полной перерисовки списка.
+        Так карточки не дёргаются при открытии/закрытии чата и настроек.
+        """
+        if not hasattr(self, "chats_list"):
+            return
+
+        for index in range(self.chats_list.count()):
+            item = self.chats_list.item(index)
+            chat = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
+            widget = self.chats_list.itemWidget(item) if item is not None else None
+
+            if not chat or widget is None:
+                continue
+
+            selected = self.is_chat_selected(chat)
+
+            for frame in widget.findChildren(QFrame):
+                if frame.objectName() in {"ChatItemCard", "ChatItemCardSelected"}:
+                    frame.setObjectName("ChatItemCardSelected" if selected else "ChatItemCard")
+                    frame.style().unpolish(frame)
+                    frame.style().polish(frame)
+                    frame.update()
+
     def render_recent_chats(self):
         self.clear_open_room_unread_local()
         self.chats_list.clear()
 
         for chat in self.recent_chats:
-            chat_type = chat.get("chat_type", "user")
-            display_name = chat.get("display_name") or chat.get("username", "unknown")
-            last_message = chat.get("last_message") or ""
-            unread_count = int(chat.get("unread_count", 0))
-
-            if chat_type == "room":
-                room_id = chat.get("room_id") or chat.get("id")
-                item_text = f"{display_name} [группа]"
-
-                if self.is_room_muted(room_id):
-                    item_text += " [без уведомлений]"
-
-                if unread_count > 0:
-                    item_text += f" ({unread_count})"
-            else:
-                online = bool(chat.get("online"))
-                status = "online" if online else "offline"
-                pinned = bool(chat.get("pinned", False))
-
-                if online:
-                    profile_status = self.status_to_text(chat.get("user_status", "available"))
-                    item_text = f"{'📌 ' if pinned else ''}{display_name} [{status}, {profile_status}]"
-                else:
-                    item_text = f"{'📌 ' if pinned else ''}{display_name} [{status}]"
-
-                if self.is_user_muted(chat.get("id")):
-                    item_text += " [без уведомлений]"
-
-                if unread_count > 0:
-                    item_text += f" ({unread_count})"
-
-            if last_message:
-                item_text += f"\n{short_text(last_message, 40)}"
-
-            item = QListWidgetItem(item_text)
+            item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, chat)
 
-            if unread_count > 0:
-                font = item.font()
-                font.setBold(True)
-                item.setFont(font)
+            widget = self.create_chat_item_widget(chat)
 
             self.chats_list.addItem(item)
+            self.chats_list.setItemWidget(item, widget)
+            self.update_chat_item_size(item, widget)
 
         if self.selected_user:
             selected_id = self.selected_user.get("id")
@@ -1618,9 +2234,9 @@ class MainWindow(QWidget):
 
     def update_window_title(self):
         if self.total_unread > 0:
-            self.setWindowTitle(f"CatCorp — Чат ({self.total_unread})")
+            self.setWindowTitle(f"{APP_NAME} — Чат ({self.total_unread})")
         else:
-            self.setWindowTitle("CatCorp — Чат")
+            self.setWindowTitle(f"{APP_NAME} — Чат")
 
     def open_new_chat_dialog(self):
         current_user_id = self.current_user.get("id") if self.current_user else None
@@ -1647,17 +2263,17 @@ class MainWindow(QWidget):
         data = dialog.get_data()
 
         if not data["name"]:
-            QMessageBox.warning(self, "Ошибка", "Введите название группы")
+            show_warning(self, "Ошибка", "Введите название группы")
             return
 
         if not data["member_ids"]:
-            QMessageBox.warning(self, "Ошибка", "Выберите хотя бы одного участника")
+            show_warning(self, "Ошибка", "Выберите хотя бы одного участника")
             return
 
         response = self.network.create_room(data["name"], data["member_ids"])
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось создать группу"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось создать группу"))
             return
 
         self.load_recent_chats()
@@ -1761,7 +2377,7 @@ class MainWindow(QWidget):
         response = self.network.get_room_members(room_id)
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось загрузить участников"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось загрузить участников"))
             return
 
         members = response.get("data", {}).get("members", [])
@@ -1780,7 +2396,7 @@ class MainWindow(QWidget):
 
             lines.append(line)
 
-        QMessageBox.information(
+        show_information(
             self,
             "Участники группы",
             "\n".join(lines) if lines else "Участников нет"
@@ -1794,7 +2410,7 @@ class MainWindow(QWidget):
         response = self.network.get_room_members(room_id)
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось загрузить участников"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось загрузить участников"))
             return
 
         members = response.get("data", {}).get("members", [])
@@ -1815,16 +2431,16 @@ class MainWindow(QWidget):
         member_ids = dialog.get_member_ids()
 
         if not member_ids:
-            QMessageBox.information(self, "Группа", "Новые участники не выбраны")
+            show_information(self, "Группа", "Новые участники не выбраны")
             return
 
         add_response = self.network.add_room_members(room_id, member_ids)
 
         if add_response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", add_response.get("message", "Не удалось добавить участников"))
+            show_warning(self, "Ошибка", add_response.get("message", "Не удалось добавить участников"))
             return
 
-        QMessageBox.information(self, "Группа", "Участники добавлены")
+        show_information(self, "Группа", "Участники добавлены")
         self.load_recent_chats()
 
     def leave_room(self, chat: dict):
@@ -1834,19 +2450,19 @@ class MainWindow(QWidget):
         room_id = self.get_room_id_from_chat(chat)
         display_name = chat.get("display_name") or chat.get("name", "группы")
 
-        answer = QMessageBox.question(
+        answer = ask_yes_no(
             self,
             "Выйти из группы",
             f"Выйти из группы '{display_name}'?"
         )
 
-        if answer != QMessageBox.StandardButton.Yes:
+        if not answer:
             return
 
         response = self.network.leave_room(room_id)
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось выйти из группы"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось выйти из группы"))
             return
 
         self.clear_current_chat_if_room(room_id)
@@ -1859,19 +2475,19 @@ class MainWindow(QWidget):
         room_id = self.get_room_id_from_chat(chat)
         display_name = chat.get("display_name") or chat.get("name", "группы")
 
-        answer = QMessageBox.question(
+        answer = ask_yes_no(
             self,
             "Удалить группу",
             f"Удалить группу '{display_name}'?\nЭто удалит группу у всех участников."
         )
 
-        if answer != QMessageBox.StandardButton.Yes:
+        if not answer:
             return
 
         response = self.network.delete_room(room_id)
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось удалить группу"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось удалить группу"))
             return
 
         self.clear_current_chat_if_room(room_id)
@@ -1884,7 +2500,7 @@ class MainWindow(QWidget):
         response = self.network.pin_chat(user_id, new_state)
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось изменить закрепление чата"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось изменить закрепление чата"))
             return
 
         data = response.get("data", {})
@@ -1898,19 +2514,19 @@ class MainWindow(QWidget):
         user_id = chat.get("id")
         display_name = chat.get("display_name") or chat.get("username", "пользователем")
 
-        answer = QMessageBox.question(
+        answer = ask_yes_no(
             self,
             "Удалить чат",
             f"Скрыть чат с {display_name}?\nСообщения не будут удалены. При новом сообщении чат появится снова."
         )
 
-        if answer != QMessageBox.StandardButton.Yes:
+        if not answer:
             return
 
         response = self.network.hide_chat(user_id)
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось скрыть чат"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось скрыть чат"))
             return
 
         data = response.get("data", {})
@@ -1931,6 +2547,7 @@ class MainWindow(QWidget):
     def handle_chat_selected(self, item: QListWidgetItem):
         user = item.data(Qt.ItemDataRole.UserRole)
         self.open_chat(user)
+        self.refresh_chat_selection_styles()
 
     def open_chat(self, user: dict):
         self.set_chat_open_state(True)
@@ -1974,7 +2591,7 @@ class MainWindow(QWidget):
         response = self.network.get_history(user_id)
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось загрузить историю"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось загрузить историю"))
             return
 
         data = response.get("data", {})
@@ -2002,7 +2619,7 @@ class MainWindow(QWidget):
         response = self.network.get_room_history(room_id)
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось загрузить историю группы"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось загрузить историю группы"))
             return
 
         data = response.get("data", {})
@@ -2084,6 +2701,97 @@ class MainWindow(QWidget):
             self.append_message(message)
 
         self.messages_list.scrollToBottom()
+
+    def message_date_key(self, message: dict) -> str:
+        """
+        Возвращает YYYY-MM-DD для группировки сообщений по дням.
+        """
+        sent_at = str(message.get("sent_at") or "").strip()
+
+        if len(sent_at) >= 10:
+            return sent_at[:10]
+
+        return ""
+
+    def message_date_label(self, date_key: str) -> str:
+        """
+        Красивый текст разделителя даты, как в мессенджерах.
+        """
+        if not date_key:
+            return "Без даты"
+
+        try:
+            date_value = datetime.strptime(date_key, "%Y-%m-%d").date()
+        except ValueError:
+            return date_key
+
+        today = datetime.now().date()
+
+        if date_value == today:
+            return "Сегодня"
+
+        if date_value == today - timedelta(days=1):
+            return "Вчера"
+
+        return date_value.strftime("%d.%m.%Y")
+
+    def should_insert_date_separator(self, message: dict) -> bool:
+        """
+        Проверяет, нужен ли разделитель даты перед сообщением.
+        """
+        current_key = self.message_date_key(message)
+
+        if not current_key:
+            return False
+
+        if not self.current_messages:
+            return True
+
+        previous_key = self.message_date_key(self.current_messages[-1])
+        return current_key != previous_key
+
+    def create_date_separator_widget(self, text: str) -> QWidget:
+        """
+        Создаёт центрированный разделитель даты.
+        """
+        row = QWidget()
+        row.setObjectName("MessageRow")
+
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(4, 8, 4, 8)
+        row_layout.addStretch(1)
+
+        badge = QFrame()
+        badge.setObjectName("DateSeparator")
+
+        badge_layout = QHBoxLayout()
+        badge_layout.setContentsMargins(10, 4, 10, 4)
+
+        label = QLabel(text)
+        label.setObjectName("DateSeparatorText")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        badge_layout.addWidget(label)
+        badge.setLayout(badge_layout)
+
+        row_layout.addWidget(badge)
+        row_layout.addStretch(1)
+        row.setLayout(row_layout)
+
+        return row
+
+    def append_date_separator(self, date_key: str):
+        """
+        Добавляет разделитель даты в список сообщений.
+        """
+        item = QListWidgetItem()
+        item.setData(Qt.ItemDataRole.UserRole, None)
+
+        widget = self.create_date_separator_widget(self.message_date_label(date_key))
+        item.setSizeHint(widget.sizeHint() + QSize(0, 10))
+
+        self.messages_list.addItem(item)
+        self.messages_list.setItemWidget(item, widget)
 
     def is_own_message(self, message: dict) -> bool:
         """
@@ -2236,27 +2944,35 @@ class MainWindow(QWidget):
         """
         Принудительно пересчитывает высоту кастомного элемента сообщения.
 
-        Без этого QLabel с переносом строк иногда считает высоту слишком рано,
-        и нижняя часть пузырька или карточки файла обрезается.
+        Метод может вызываться отложенно через QTimer.singleShot.
+        Если история уже перерисована, старый QListWidgetItem может быть удалён.
+        В таком случае просто выходим без ошибки.
         """
         if item is None or widget is None or not hasattr(self, "messages_list"):
             return
 
-        row_width = self.message_row_width()
-        widget.setMinimumWidth(row_width)
-        widget.setMaximumWidth(row_width)
+        try:
+            if self.messages_list.row(item) < 0:
+                return
 
-        layout = widget.layout()
+            row_width = self.message_row_width()
+            widget.setMinimumWidth(row_width)
+            widget.setMaximumWidth(row_width)
 
-        if layout is not None:
-            layout.invalidate()
-            layout.activate()
+            layout = widget.layout()
 
-        widget.updateGeometry()
-        widget.adjustSize()
+            if layout is not None:
+                layout.invalidate()
+                layout.activate()
 
-        height = max(widget.sizeHint().height(), widget.minimumSizeHint().height()) + 24
-        item.setSizeHint(QSize(row_width, height))
+            widget.updateGeometry()
+            widget.adjustSize()
+
+            height = max(widget.sizeHint().height(), widget.minimumSizeHint().height()) + 24
+            item.setSizeHint(QSize(row_width, height))
+
+        except RuntimeError:
+            return
 
     def refresh_message_widget_sizes(self):
         """
@@ -2318,6 +3034,9 @@ class MainWindow(QWidget):
         return f"{title}\n{content}"
 
     def append_message(self, message: dict):
+        if self.should_insert_date_separator(message):
+            self.append_date_separator(self.message_date_key(message))
+
         self.current_messages.append(message)
 
         item = QListWidgetItem()
@@ -2402,7 +3121,7 @@ class MainWindow(QWidget):
     def edit_own_message(self, message: dict):
         old_content = str(message.get("content", ""))
 
-        new_content, ok = QInputDialog.getMultiLineText(
+        new_content, ok = get_multiline_text(
             self,
             "Редактировать сообщение",
             "Новый текст:",
@@ -2423,7 +3142,7 @@ class MainWindow(QWidget):
             response = self.network.edit_message(message.get("id"), new_content)
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка", response.get("message", "Не удалось отредактировать сообщение"))
+            show_warning(self, "Ошибка", response.get("message", "Не удалось отредактировать сообщение"))
             return
 
         if self.selected_user:
@@ -2637,7 +3356,7 @@ class MainWindow(QWidget):
         Выбирает один или несколько файлов для отправки через Explorer.
         """
         if not self.selected_user:
-            QMessageBox.information(self, "Нет чата", "Сначала выберите личный чат или группу")
+            show_information(self, "Нет чата", "Сначала выберите личный чат или группу")
             return
 
         file_paths, _ = QFileDialog.getOpenFileNames(
@@ -2659,7 +3378,7 @@ class MainWindow(QWidget):
             return
 
         if not self.selected_user:
-            QMessageBox.information(self, "Нет чата", "Сначала выберите личный чат или группу")
+            show_information(self, "Нет чата", "Сначала выберите личный чат или группу")
             return
 
         accepted = []
@@ -2695,7 +3414,7 @@ class MainWindow(QWidget):
             self.update_attachment_label()
 
         if skipped:
-            QMessageBox.warning(
+            show_warning(
                 self,
                 "Некоторые файлы не добавлены",
                 "Файл должен быть не пустым и не больше 25 МБ:\\n" + "\\n".join(skipped[:10])
@@ -2797,9 +3516,9 @@ class MainWindow(QWidget):
 
     def downloads_dir(self) -> Path:
         """
-        Возвращает папку Downloads/CatCorp.
+        Возвращает папку Downloads/Intercom.
         """
-        directory = Path.home() / "Downloads" / "CatCorp"
+        directory = Path.home() / "Downloads" / DOWNLOADS_FOLDER_NAME
         directory.mkdir(parents=True, exist_ok=True)
         return directory
 
@@ -2819,18 +3538,18 @@ class MainWindow(QWidget):
 
     def download_file_message(self, message: dict):
         """
-        Скачивает файл в Downloads/CatCorp.
+        Скачивает файл в Downloads/Intercom.
         """
         file_id = message.get("file_id")
 
         if not file_id:
-            QMessageBox.warning(self, "Файл", "ID файла отсутствует")
+            show_warning(self, "Файл", "ID файла отсутствует")
             return
 
         response = self.network.download_file(file_id)
 
         if response.get("status") != "ok":
-            QMessageBox.warning(self, "Ошибка скачивания", response.get("message", "Не удалось скачать файл"))
+            show_warning(self, "Ошибка скачивания", response.get("message", "Не удалось скачать файл"))
             return
 
         data = response.get("data", {}) or {}
@@ -2840,7 +3559,7 @@ class MainWindow(QWidget):
         try:
             file_bytes = base64.b64decode(str(data_b64).encode("ascii"), validate=True)
         except (ValueError, UnicodeEncodeError):
-            QMessageBox.warning(self, "Ошибка скачивания", "Файл повреждён при передаче")
+            show_warning(self, "Ошибка скачивания", "Файл повреждён при передаче")
             return
 
         save_path = unique_download_path(self.downloads_dir(), original_name)
@@ -2848,14 +3567,14 @@ class MainWindow(QWidget):
         try:
             save_path.write_bytes(file_bytes)
         except OSError:
-            QMessageBox.warning(self, "Ошибка скачивания", "Не удалось сохранить файл")
+            show_warning(self, "Ошибка скачивания", "Не удалось сохранить файл")
             return
 
-        QMessageBox.information(self, "Файл скачан", f"Файл сохранён:\\n{save_path}")
+        show_information(self, "Файл скачан", f"Файл сохранён:\\n{save_path}")
 
     def send_message(self):
         if not self.selected_user:
-            QMessageBox.information(self, "Нет получателя", "Сначала выберите чат или нажмите '+ Новый чат'")
+            show_information(self, "Нет получателя", "Сначала выберите чат или нажмите '+ Новый чат'")
             return
 
         content = self.message_input.text().strip()
@@ -2891,7 +3610,7 @@ class MainWindow(QWidget):
                     response = self.network.send_message(receiver_id, content, reply_to_message_id)
 
                 if response.get("status") != "ok":
-                    QMessageBox.warning(self, "Ошибка отправки", response.get("message", "Не удалось отправить сообщение"))
+                    show_warning(self, "Ошибка отправки", response.get("message", "Не удалось отправить сообщение"))
                     return
 
                 data = response.get("data", {})
@@ -2909,7 +3628,7 @@ class MainWindow(QWidget):
                     response = self.network.upload_file(file_path, "user", target_id)
 
                 if response.get("status") != "ok":
-                    QMessageBox.warning(
+                    show_warning(
                         self,
                         "Ошибка отправки файла",
                         f"{Path(file_path).name}: {response.get('message', 'Не удалось отправить файл')}"
@@ -3040,9 +3759,29 @@ class MainWindow(QWidget):
         self.load_recent_chats()
 
 
+    def showEvent(self, event):
+        """
+        render_recent_chats() вызывается ещё в __init__, до того как окно
+        реально показано и получило свою итоговую ширину — в этот момент
+        chats_list.viewport().width() возвращает заниженное значение, и оно
+        "запекается" в размеры карточек. Пересчитываем размеры после первого
+        реального показа окна, когда ширина уже верная.
+        """
+        super().showEvent(event)
+        QTimer.singleShot(0, self.refresh_chat_item_sizes)
+
+    def showEvent(self, event):
+        """
+        После первого показа окна пересчитывает sidebar уже по реальным размерам.
+        """
+        super().showEvent(event)
+
+        QTimer.singleShot(0, self.refresh_sidebar_geometry)
+        QTimer.singleShot(80, self.refresh_sidebar_geometry)
+
     def resizeEvent(self, event):
         """
-        При изменении размера окна просим список сообщений пересчитать перенос строк.
+        При изменении размера окна просим списки пересчитать перенос строк и ширину карточек.
         """
         super().resizeEvent(event)
 
@@ -3050,8 +3789,12 @@ class MainWindow(QWidget):
             self.refresh_message_widget_sizes()
             self.messages_list.doItemsLayout()
 
+        if hasattr(self, "chats_list"):
+            self.refresh_sidebar_geometry()
+            self.chats_list.doItemsLayout()
+
     def handle_disconnected(self):
-        QMessageBox.warning(self, "Соединение потеряно", "Соединение с сервером закрыто")
+        show_warning(self, "Соединение потеряно", "Соединение с сервером закрыто")
 
     def closeEvent(self, event):
         if (
@@ -3061,7 +3804,7 @@ class MainWindow(QWidget):
         ):
             event.ignore()
             self.hide()
-            self.show_tray_notification("CatCorp", "Приложение продолжает работать в трее")
+            self.show_tray_notification("Intercom", "Приложение продолжает работать в трее")
             return
 
         self.stop_typing()

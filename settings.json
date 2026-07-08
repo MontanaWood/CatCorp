@@ -4,7 +4,7 @@
     "minimize_to_tray": false,
     "hide_notification_preview": false,
     "remember_login": false,
-    "theme": "dark",
+    "theme": "light",
     "muted_room_ids": [],
     "muted_user_ids": [],
     "mute_all_chats": false

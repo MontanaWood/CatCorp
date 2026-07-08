@@ -1,4 +1,4 @@
-# Модуль работы серверной части CatCorp с базой данных MySQL/MariaDB
+# Модуль работы серверной части Intercom с базой данных MySQL/MariaDB
 
 import hashlib
 import bcrypt

@@ -1,4 +1,4 @@
-# Простое окно входа и регистрации клиента CatCorp на PyQt6
+# Простое окно входа и регистрации клиента Intercom на PyQt6
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtWidgets import (
@@ -22,7 +22,7 @@ from client_network import (
     load_server_config_dict,
     save_server_config
 )
-from client_gui.main_window import MainWindow, load_settings, save_settings, apply_app_theme
+from client_gui.main_window import MainWindow, load_settings, save_settings, apply_app_theme, APP_NAME
 
 
 class AuthWorker(QThread):
@@ -121,7 +121,7 @@ class ServerConfigDialog(QDialog):
 
 class LoginWindow(QWidget):
     """
-    Простое окно авторизации и регистрации CatCorp.
+    Простое окно авторизации и регистрации Intercom.
     """
 
     def __init__(self):
@@ -133,7 +133,7 @@ class LoginWindow(QWidget):
         self.mode = "login"
         self.auto_login_started = False
 
-        self.setWindowTitle("CatCorp — Вход")
+        self.setWindowTitle(f"{APP_NAME} — Вход")
         self.setFixedSize(380, 340)
         apply_app_theme(load_settings())
 
@@ -146,7 +146,7 @@ class LoginWindow(QWidget):
         """
         Создаёт простой интерфейс без кастомного дизайна.
         """
-        title_label = QLabel("CatCorp")
+        title_label = QLabel(APP_NAME)
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.subtitle_label = QLabel("")
@@ -242,14 +242,14 @@ class LoginWindow(QWidget):
         self.status_label.setText("")
 
         if self.mode == "login":
-            self.setWindowTitle("CatCorp — Вход")
+            self.setWindowTitle(f"{APP_NAME} — Вход")
             self.subtitle_label.setText("Вход в систему")
             self.repeat_password_input.hide()
             self.remember_login_checkbox.show()
             self.action_button.setText("Войти")
             self.switch_button.setText("Нет аккаунта? Зарегистрироваться")
         else:
-            self.setWindowTitle("CatCorp — Регистрация")
+            self.setWindowTitle("Intercom — Регистрация")
             self.subtitle_label.setText("Создание аккаунта")
             self.repeat_password_input.show()
             self.remember_login_checkbox.hide()
