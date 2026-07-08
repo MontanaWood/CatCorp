@@ -44,6 +44,57 @@ from client_network import ClientNetwork, load_auth_token, clear_auth_token
 APP_NAME = "Intercom"
 DOWNLOADS_FOLDER_NAME = APP_NAME
 
+ASSETS_DIR_NAME = "assets"
+APP_ICON_PNG = "app_icon.png"
+APP_ICON_ICO = "app_icon.ico"
+
+
+def app_resource_path(relative_path: str) -> str:
+    """
+    Возвращает путь к ресурсу приложения.
+
+    Работает при запуске через python client.py и внутри PyInstaller exe.
+    """
+    if getattr(sys, "frozen", False):
+        base_dir = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+    else:
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+    return os.path.join(base_dir, relative_path)
+
+
+def app_icon_path(prefer_ico: bool = False) -> str | None:
+    """
+    Возвращает путь к иконке приложения, если файл найден.
+    """
+    preferred_file = APP_ICON_ICO if prefer_ico else APP_ICON_PNG
+    fallback_file = APP_ICON_PNG if prefer_ico else APP_ICON_ICO
+
+    for filename in (preferred_file, fallback_file):
+        path = app_resource_path(os.path.join(ASSETS_DIR_NAME, filename))
+
+        if os.path.exists(path):
+            return path
+
+    return None
+
+
+def app_icon(prefer_ico: bool = False) -> QIcon:
+    """
+    Возвращает QIcon приложения.
+    """
+    path = app_icon_path(prefer_ico=prefer_ico)
+
+    if not path:
+        return QIcon()
+
+    icon = QIcon(path)
+
+    if icon.isNull():
+        return QIcon()
+
+    return icon
+
 
 DEFAULT_SETTINGS = {
     "sound_enabled": True,
@@ -1470,6 +1521,7 @@ class MainWindow(QWidget):
         self.is_typing_sent = False
 
         self.setWindowTitle(f"{APP_NAME} — Чат")
+        self.setWindowIcon(app_icon())
         self.resize(940, 600)
 
         self._build_ui()
@@ -1740,6 +1792,9 @@ class MainWindow(QWidget):
             return
 
         icon = self.windowIcon()
+
+        if icon.isNull():
+            icon = app_icon()
 
         if icon.isNull():
             icon = QApplication.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)

@@ -22,7 +22,7 @@ from client_network import (
     load_server_config_dict,
     save_server_config
 )
-from client_gui.main_window import MainWindow, load_settings, save_settings, apply_app_theme, APP_NAME
+from client_gui.main_window import MainWindow, load_settings, save_settings, apply_app_theme, APP_NAME, app_icon
 
 
 class AuthWorker(QThread):
@@ -73,6 +73,7 @@ class ServerConfigDialog(QDialog):
         super().__init__(parent)
 
         self.setWindowTitle("Сервер")
+        self.setWindowIcon(app_icon())
         self.resize(320, 160)
 
         config = load_server_config_dict()
@@ -134,6 +135,7 @@ class LoginWindow(QWidget):
         self.auto_login_started = False
 
         self.setWindowTitle(f"{APP_NAME} — Вход")
+        self.setWindowIcon(app_icon())
         self.setFixedSize(380, 340)
         apply_app_theme(load_settings())
 
@@ -249,7 +251,7 @@ class LoginWindow(QWidget):
             self.action_button.setText("Войти")
             self.switch_button.setText("Нет аккаунта? Зарегистрироваться")
         else:
-            self.setWindowTitle("Intercom — Регистрация")
+            self.setWindowTitle(f"{APP_NAME} — Регистрация")
             self.subtitle_label.setText("Создание аккаунта")
             self.repeat_password_input.show()
             self.remember_login_checkbox.hide()
